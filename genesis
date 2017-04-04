@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+
+import argparse
+import itertools
+import multiprocessing
+import os
+import os.path
+import shlex
+import subprocess
+import sys
+
+#
+# Globals
+#
+
+PROGRAM = sys.argv[0]
+ARGV = sys.argv[1:]
+
+# Default values for command line options.
+BOARD_DEFAULT = '96b_nitrogen'
+CONF_FILE_DEFAULT = 'prj.conf'
+BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
+
+# Other default values.
+BUILD_DIR_DEFAULT = 'outdir'              # relative to genesis root.
+
+# Checked out paths for important repositories relative to Genesis root.
+# TODO: parse these from the repo manifest, for robustness, at some point.
+ZEPHYR_PATH = 'zephyr'
+ZEPHYR_SDK_PATH = os.path.join('sdk-prebuilts', 'zephyr-sdk')
+MCUBOOT_PATH = 'mcuboot'
+
+# We could be smarter about this (search for .repo, e.g.), but it seems
+# unnecessary.
+GENESIS_ROOT = os.path.abspath(os.path.dirname(__file__))
+
+# Build configuration from command line options that overrides environment
+# variables.
+BUILD_OPTIONS = ['board', 'conf_file']
+# Build configuration from internal values that overrides env. variables.
+# TODO: override SDK install dir when we can provide a prebuilt repository.
+BUILD_OVERRIDES = ['zephyr_base',
+                   'zephyr_gcc_variant',
+                   # 'zephyr_sdk_install_dir'
+                   ]
+
+# What types of build outputs to produce.
+# - app: Genesis application, which can be signed for flashing or FOTA update.
+# - mcuboot: Genesis bootloader, not signed and must be flashed.
+BUILD_OUTPUTS = ['app', 'mcuboot']
+
+
+#
+# Path management
+#
+
+
+def find_genesis_root():
+    '''Get absolute path of root directory of this Genesis installation.'''
+    return GENESIS_ROOT
+
+
+def find_zephyr_base():
+    '''Get absolute path of Genesis Zephyr base directory.'''
+    return os.path.join(find_genesis_root(), ZEPHYR_PATH)
+
+
+def find_zephyr_sdk():
+    '''Get absolute path of Genesis Zephyr SDK.'''
+    return os.path.join(find_genesis_root(), ZEPHYR_SDK_PATH)
+
+
+def find_app_root(app_name):
+    '''Get absolute path of app within Genesis Zephyr SDK.'''
+    return os.path.join(find_genesis_root(), app_name)
+
+
+def find_mcuboot_root():
+    '''Get absolute path of mcuboot repository.'''
+    return os.path.join(find_genesis_root(), MCUBOOT_PATH)
+
+
+def find_default_outdir():
+    '''Get absolute path of default output directory.'''
+    return os.path.join(find_genesis_root(), BUILD_DIR_DEFAULT)
+
+
+#
+# Build
+#
+
+
+def build_warn_override(args, arg):
+    arg_val = getattr(args, arg)
+    env_var = arg.upper()
+    if env_var in os.environ and arg_val != os.environ[env_var]:
+        print('Warning: overriding {}:'.format(env_var),
+              file=sys.stderr)
+        print('\tenvironment value: {}'.format(os.environ[env_var]),
+              file=sys.stderr)
+        print('\tbuilding with:     {}'.format(arg_val),
+              file=sys.stderr)
+
+
+def build_warn_overrides(build_args):
+    '''Warn on values overridden from the environment.
+
+    Looks for environment variables relevant to the Zephyr or
+    application build (BOARD, etc.), and warns on values that are
+    overridden by Genesis.'''
+    for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+        build_warn_override(build_args, b)
+
+
+def build(build_argv):
+    # Build command parser.
+    build_parser = argparse.ArgumentParser(
+        prog=PROGRAM + ' build',
+        description='Build Genesis application images')
+    build_parser.add_argument('-b', '--board',
+                              default=BOARD_DEFAULT,
+                              help='''Zephyr board to build for
+                                   (default: {})'''.format(BOARD_DEFAULT))
+    build_parser.add_argument('-c', '--conf-file',
+                              default=CONF_FILE_DEFAULT,
+                              help='''App (not mcuboot) configuration file
+                                   (default: {})'''.format(CONF_FILE_DEFAULT))
+    build_parser.add_argument('--debug', action='store_true',
+                              help='If set, print debugging output')
+    build_parser.add_argument('-j', '--jobs',
+                              type=int, default=BUILD_PARALLEL_DEFAULT,
+                              help='''Number of jobs to run simultaneously
+                                   (default: number of available CPUs)''')
+    build_parser.add_argument('-k', '--keep-going',
+                              action='store_true',
+                              help='''If set, keep running builds after the
+                                   first failure. Otherwise, exit on the first
+                                   build which fails, with its return code.''')
+    build_parser.add_argument('-o', '--outputs',
+                              choices=BUILD_OUTPUTS + ['all'],
+                              default='all',
+                              help='Which outputs to generate (default: all)')
+    build_parser.add_argument('-O', '--outdir',
+                              default=find_default_outdir(),
+                              help='''Base directory for build outputs
+                                   (default: '{}' under Genesis root). Note
+                                   that non-default directories must be
+                                   flashed, reconfigured, etc. manually.
+                                   '''.format(BUILD_DIR_DEFAULT))
+    build_parser.add_argument('app', nargs='+',
+                              help='App or apps to build')
+
+    # Parse build commands and add on internal settings.
+    #
+    # TODO: allow application override via --allow-overrides option.
+    build_args = build_parser.parse_args(build_argv)
+    if build_args.outputs == 'all':
+        build_args.outputs = BUILD_OUTPUTS
+    else:
+        build_args.outputs = [build_args.outputs]
+    build_args.zephyr_base = find_zephyr_base()
+    build_args.zephyr_gcc_variant = 'zephyr'
+    # build_args.zephyr_sdk_install_dir = find_zephyr_sdk()
+
+    build_warn_overrides(build_args)
+
+    # Create the build environments.
+    #
+    # Some of our config can be passed in the make command line, but not all of
+    # it. It can all be read from the build environment, though, so we just use
+    # that.
+    app_build_env = dict(os.environ)
+    for v in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+        app_build_env[v.upper()] = getattr(build_args, v)
+    mcuboot_build_env = dict(app_build_env)
+    del mcuboot_build_env['CONF_FILE']
+    build_envs = {'app': app_build_env,
+                  'mcuboot': mcuboot_build_env}
+
+    # Run the builds.
+    for app in build_args.app:
+        makefile_dirs = {'app': find_app_root(app),
+                         'mcuboot': find_mcuboot_root()}
+        for output in build_args.outputs:
+            outdir = os.path.join(build_args.outdir,
+                                  build_args.board,
+                                  app,
+                                  output)
+            cmd = ['make',
+                   '-C', shlex.quote(makefile_dirs[output]),
+                   '-j', str(build_args.jobs),
+                   'O={}'.format(shlex.quote(outdir))]
+
+            if build_args.debug:
+                print('Running build:')
+                for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+                    print('\t{}={} \\'.format(b.upper(),
+                                              getattr(build_args, b)))
+                print('\t' + ' '.join(cmd))
+
+            try:
+                subprocess.check_call(cmd, env=build_envs[output])
+            except subprocess.CalledProcessError as e:
+                if not build_args.keep_going:
+                    sys.exit(e.returncode)
+
+
+#
+# main()
+#
+
+
+def main():
+    # Parsing is split into a multilevel structure based on the top-level
+    # command. The first level is $scriptname [-h] $command [command_arg ...]
+    top_parser = argparse.ArgumentParser(
+        prog=PROGRAM,
+        description="Front-end to Genesis build system",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    top_parser.add_argument('command',
+                            choices=['build'],
+                            help='Top level command')
+    top_parser.add_argument('command_args', nargs=argparse.REMAINDER,
+                            metavar='...', help='Command arguments')
+    top_args = top_parser.parse_args(ARGV)
+
+    # Dispatch to individual command handlers
+    try:
+        if top_args.command == 'build':
+            return build(top_args.command_args)
+    except ValueError as e:
+        print('Error:', e.args[0], file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
