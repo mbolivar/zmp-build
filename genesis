@@ -20,6 +20,8 @@ ARGV = sys.argv[1:]
 BOARD_DEFAULT = '96b_nitrogen'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
+MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'     # Development-only signing key.
+MCUBOOT_DEV_KEY_TYPE = 'RSA'              # Key type of development key.
 
 # Other default values.
 BUILD_DIR_DEFAULT = 'outdir'              # relative to genesis root.
@@ -48,6 +50,35 @@ BUILD_OVERRIDES = ['zephyr_base',
 # - app: Genesis application, which can be signed for flashing or FOTA update.
 # - mcuboot: Genesis bootloader, not signed and must be flashed.
 BUILD_OUTPUTS = ['app', 'mcuboot']
+
+# zep2newt.py state.
+#
+# FIXME: there are too many copies of this information.
+#
+# All of this configuration really needs to live in one place (not here), and
+# to get propagated to each application and mcuboot's own build systems at
+# "configuration" time.
+ZEP2NEWT = os.path.join('scripts', 'zep2newt.py')
+ZEP2NEWT_BOARD_INFO = {
+    '96b_nitrogen': {
+        'vtoff': 0x100,
+        'word-size': 4,
+        'pad': 0x34000,
+    },
+
+    '96b_carbon': {
+        'vtoff': 0x100,
+        'word-size': 1,
+        'pad': 0x20000,
+    },
+
+    'frdm_k64f': {
+        'vtoff': 0x200,
+        'word-size': 8,
+        'pad': 0x20000,
+    },
+}
+ZEP2NEWT_KEY_TYPES = ['SHA256', 'RSA']
 
 
 #
@@ -113,11 +144,14 @@ def build_warn_overrides(build_args):
 
 
 def build(build_argv):
+    insecure_requested = False
+
     # Build command parser.
     build_parser = argparse.ArgumentParser(
         prog=PROGRAM + ' build',
         description='Build Genesis application images')
     build_parser.add_argument('-b', '--board',
+                              choices=list(ZEP2NEWT_BOARD_INFO.keys()),
                               default=BOARD_DEFAULT,
                               help='''Zephyr board to build for
                                    (default: {})'''.format(BOARD_DEFAULT))
@@ -136,6 +170,14 @@ def build(build_argv):
                               help='''If set, keep running builds after the
                                    first failure. Otherwise, exit on the first
                                    build which fails, with its return code.''')
+    build_parser.add_argument('-K', '--signing-key',
+                              help='''Path to signing key for application
+                                   binary. WARNING: if not given, an INSECURE
+                                   default key is used which should NOT be
+                                   used for production images.''')
+    build_parser.add_argument('-t', '--signing-key-type',
+                              choices=ZEP2NEWT_KEY_TYPES,
+                              help='Key type for signing key')
     build_parser.add_argument('-o', '--outputs',
                               choices=BUILD_OUTPUTS + ['all'],
                               default='all',
@@ -161,6 +203,16 @@ def build(build_argv):
     build_args.zephyr_base = find_zephyr_base()
     build_args.zephyr_gcc_variant = 'zephyr'
     # build_args.zephyr_sdk_install_dir = find_zephyr_sdk()
+    sk_none = build_args.signing_key is None
+    skt_none = build_args.signing_key_type is None
+    if sk_none ^ skt_none:
+        raise ValueError('{} and {} must both be given or both omitted'.format(
+            '--signing-key', '--signing-key-type'))
+    if build_args.signing_key is None:
+        build_args.signing_key = os.path.join(find_mcuboot_root(),
+                                              MCUBOOT_DEV_KEY)
+        build_args.signing_key_type = MCUBOOT_DEV_KEY_TYPE
+        insecure_requested = True
 
     build_warn_overrides(build_args)
 
@@ -186,20 +238,50 @@ def build(build_argv):
                                   build_args.board,
                                   app,
                                   output)
-            cmd = ['make',
-                   '-C', shlex.quote(makefile_dirs[output]),
-                   '-j', str(build_args.jobs),
-                   'O={}'.format(shlex.quote(outdir))]
+
+            # Application/mcuboot build command.
+            cmd_build = ['make',
+                         '-C', shlex.quote(makefile_dirs[output]),
+                         '-j', str(build_args.jobs),
+                         'O={}'.format(shlex.quote(outdir))]
+
+            # Application signing command.
+            vtoff = ZEP2NEWT_BOARD_INFO[build_args.board]['vtoff']
+            word_size = ZEP2NEWT_BOARD_INFO[build_args.board]['word-size']
+            pad = ZEP2NEWT_BOARD_INFO[build_args.board]['pad']
+            unsigned_bin = os.path.join(outdir, 'zephyr.bin')
+            signed_bin = os.path.join(
+                outdir,
+                '{}-{}-signed.bin'.format(app, build_args.board))
+            cmd_sign = ['/usr/bin/env', 'python3',
+                        os.path.join(find_mcuboot_root(), ZEP2NEWT),
+                        '--bin', shlex.quote(unsigned_bin),
+                        '--key', shlex.quote(build_args.signing_key),
+                        '--sig', build_args.signing_key_type,
+                        '--vtoff', hex(vtoff),
+                        '--word-size', str(word_size),
+                        '--pad', hex(pad),
+                        '--bit',
+                        '--out', shlex.quote(signed_bin)]
 
             if build_args.debug:
                 print('Running build:')
                 for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
                     print('\t{}={} \\'.format(b.upper(),
                                               getattr(build_args, b)))
-                print('\t' + ' '.join(cmd))
+                print('\t' + ' '.join(cmd_build))
+                if output == 'app':
+                    print('\t' + ' '.join(cmd_sign))
 
             try:
-                subprocess.check_call(cmd, env=build_envs[output])
+                subprocess.check_call(cmd_build, env=build_envs[output])
+                if output == 'app':
+                    subprocess.check_call(cmd_sign, env=build_envs[output])
+                    if insecure_requested:
+                        print('Warning: used insecure default signing key.',
+                              'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.',
+                              file=sys.stderr)
+
             except subprocess.CalledProcessError as e:
                 if not build_args.keep_going:
                     sys.exit(e.returncode)
