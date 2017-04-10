@@ -22,6 +22,7 @@ CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'     # Development-only signing key.
 MCUBOOT_DEV_KEY_TYPE = 'RSA'              # Key type of development key.
+CONFIGURATOR_DEFAULT = 'menuconfig'
 
 # Other default values.
 BUILD_DIR_DEFAULT = 'outdir'              # relative to genesis root.
@@ -79,6 +80,11 @@ ZEP2NEWT_BOARD_INFO = {
     },
 }
 ZEP2NEWT_KEY_TYPES = ['SHA256', 'RSA']
+
+CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
+                 'oldconfig', 'silentoldconfig', 'defconfig', 'savedefconfig',
+                 'allnoconfig', 'allyesconfig', 'alldefconfig', 'randconfig',
+                 'listnewconfig', 'olddefconfig']
 
 
 #
@@ -336,6 +342,44 @@ def build(build_argv):
 
 
 #
+# Configure
+#
+
+
+def configure(configure_argv):
+    configure_parser = argparse.ArgumentParser(
+        prog=PROGRAM + ' configure',
+        description='''Configure Genesis application images. If multiple apps
+                    are given, the configurators are run in the order the apps
+                    are specified.''')
+    make_add_args(configure_parser)
+    configure_parser.add_argument(
+        '-C', '--configurator',
+        choices=CONFIGURATORS,
+        default=CONFIGURATOR_DEFAULT,
+        help='Configure front-end (default: {})'.format(CONFIGURATOR_DEFAULT))
+
+    configure_args = configure_parser.parse_args(configure_argv)
+    make_do_overrides(configure_args)
+    configure_envs = make_environments(configure_args)
+    for app in configure_args.app:
+        makefile_dirs = makefile_directories(app)
+        for output in configure_args.outputs:
+            outdir = make_outdir(configure_args, app, output)
+            cmd_configure = ['make',
+                             '-C', shlex.quote(makefile_dirs[output]),
+                             '-j', str(configure_args.jobs),
+                             'O={}'.format(shlex.quote(outdir)),
+                             configure_args.configurator]
+            try:
+                subprocess.check_call(cmd_configure,
+                                      env=configure_envs[output])
+            except subprocess.CalledProcessError as e:
+                if not configure_args.keep_going:
+                    sys.exit(e.returncode)
+
+
+#
 # main()
 #
 
@@ -348,7 +392,7 @@ def main():
         description="Front-end to Genesis build system",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     top_parser.add_argument('command',
-                            choices=['build'],
+                            choices=['build', 'configure'],
                             help='Top level command')
     top_parser.add_argument('command_args', nargs=argparse.REMAINDER,
                             metavar='...', help='Command arguments')
@@ -358,6 +402,8 @@ def main():
     try:
         if top_args.command == 'build':
             return build(top_args.command_args)
+        elif top_args.command == 'configure':
+            return configure(top_args.command_args)
     except ValueError as e:
         print('Error:', e.args[0], file=sys.stderr)
         sys.exit(1)
