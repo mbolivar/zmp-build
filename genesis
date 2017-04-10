@@ -117,11 +117,68 @@ def find_default_outdir():
 
 
 #
-# Build
+# Make helpers
 #
 
 
-def build_warn_override(args, arg):
+def make_add_args(make_based_parser, help_overrides={}):
+    '''Add arguments to a parser for commands which shell out to a Makefile.'''
+    # These capture arguments that are needed by Zephyr makefiles, such as
+    # BOARD and CONF_FILE, as well as arguments that get passed to make itself.
+    # It's meant to cover the least common denominator only, depending on
+    # what's needed by the script's currently handled commands.
+    #
+    # TODO: allow application override for things like ZEPHYR_BASE via
+    # --allow-overrides option.
+    arg_help = {
+        'board': 'Zephyr board to target (default: {})'.format(BOARD_DEFAULT),
+        'conf-file': '''App (not mcuboot) configuration file
+                     (default: {})'''.format(CONF_FILE_DEFAULT),
+        'jobs': '''Number of jobs to run simultaneously (default: number of
+                available CPUs)''',
+        'keep-going': '''If set, keep running after the first build failure.
+                      Otherwise, exit on the first failure, with failing
+                      command's exit code.''',
+        'outdir': '''Build directory
+                  (default: '{}' under Genesis root).'''.format(
+                      BUILD_DIR_DEFAULT),
+        'outputs': 'Which outputs to target (default: all)',
+        'app': 'Genesis application(s) sources',
+        }
+    arg_help.update(help_overrides)
+
+    make_based_parser.add_argument(
+        '-b', '--board',
+        choices=list(ZEP2NEWT_BOARD_INFO.keys()),
+        default=BOARD_DEFAULT,
+        help=arg_help['board'])
+    make_based_parser.add_argument(
+        '-c', '--conf-file',
+        default=CONF_FILE_DEFAULT,
+        help=arg_help['conf-file'])
+    make_based_parser.add_argument(
+        '-j', '--jobs',
+        type=int, default=BUILD_PARALLEL_DEFAULT,
+        help=arg_help['jobs'])
+    make_based_parser.add_argument(
+        '-k', '--keep-going',
+        action='store_true',
+        help=arg_help['keep-going'])
+    make_based_parser.add_argument(
+        '-O', '--outdir',
+        default=find_default_outdir(),
+        help=arg_help['outdir'])
+    make_based_parser.add_argument(
+        '-o', '--outputs',
+        choices=BUILD_OUTPUTS + ['all'],
+        default='all',
+        help=arg_help['outputs'])
+    make_based_parser.add_argument(
+        'app', nargs='+',
+        help=arg_help['app'])
+
+
+def make_warn_override(args, arg):
     arg_val = getattr(args, arg)
     env_var = arg.upper()
     if env_var in os.environ and arg_val != os.environ[env_var]:
@@ -133,43 +190,73 @@ def build_warn_override(args, arg):
               file=sys.stderr)
 
 
-def build_warn_overrides(build_args):
+def make_warn_overrides(args):
     '''Warn on values overridden from the environment.
 
     Looks for environment variables relevant to the Zephyr or
     application build (BOARD, etc.), and warns on values that are
     overridden by Genesis.'''
     for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
-        build_warn_override(build_args, b)
+        make_warn_override(args, b)
+
+
+def make_do_overrides(args):
+    if args.outputs == 'all':
+        args.outputs = BUILD_OUTPUTS
+    else:
+        args.outputs = [args.outputs]
+    args.zephyr_base = find_zephyr_base()
+    args.zephyr_gcc_variant = 'zephyr'
+    # args.zephyr_sdk_install_dir = find_zephyr_sdk()
+
+    make_warn_overrides(args)
+
+
+def makefile_directories(app):
+    '''Get paths to application and mcuboot Makefile directories for an app.
+
+    These are returned in a dictionary, with keys 'app' and 'mcuboot'.'''
+    return {'app': find_app_root(app),
+            'mcuboot': find_mcuboot_root()}
+
+
+def make_environments(args):
+    '''Create environments for invoking make on an application.
+
+    In general, multiple environments are needed: one for running make
+    for the app itself, and another for running make on the app's
+    mcuboot build.  These are returned in a dictionary, with keys 'app'
+    and 'mcuboot'.'''
+    app_build_env = dict(os.environ)
+    for v in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+        app_build_env[v.upper()] = getattr(args, v)
+    mcuboot_build_env = dict(app_build_env)
+    del mcuboot_build_env['CONF_FILE']
+    return {'app': app_build_env,
+            'mcuboot': mcuboot_build_env}
+
+
+def make_outdir(args, app, output):
+    '''Get output (build) directory for an app output.'''
+    return os.path.join(args.outdir, args.board, app, output)
+
+
+#
+# Build
+#
 
 
 def build(build_argv):
     insecure_requested = False
 
     # Build command parser.
+    build_help_overrides = {'outputs': 'Which outputs to build (default: all)'}
     build_parser = argparse.ArgumentParser(
         prog=PROGRAM + ' build',
         description='Build Genesis application images')
-    build_parser.add_argument('-b', '--board',
-                              choices=list(ZEP2NEWT_BOARD_INFO.keys()),
-                              default=BOARD_DEFAULT,
-                              help='''Zephyr board to build for
-                                   (default: {})'''.format(BOARD_DEFAULT))
-    build_parser.add_argument('-c', '--conf-file',
-                              default=CONF_FILE_DEFAULT,
-                              help='''App (not mcuboot) configuration file
-                                   (default: {})'''.format(CONF_FILE_DEFAULT))
+    make_add_args(build_parser, build_help_overrides)
     build_parser.add_argument('--debug', action='store_true',
                               help='If set, print debugging output')
-    build_parser.add_argument('-j', '--jobs',
-                              type=int, default=BUILD_PARALLEL_DEFAULT,
-                              help='''Number of jobs to run simultaneously
-                                   (default: number of available CPUs)''')
-    build_parser.add_argument('-k', '--keep-going',
-                              action='store_true',
-                              help='''If set, keep running builds after the
-                                   first failure. Otherwise, exit on the first
-                                   build which fails, with its return code.''')
     build_parser.add_argument('-K', '--signing-key',
                               help='''Path to signing key for application
                                    binary. WARNING: if not given, an INSECURE
@@ -178,31 +265,9 @@ def build(build_argv):
     build_parser.add_argument('-t', '--signing-key-type',
                               choices=ZEP2NEWT_KEY_TYPES,
                               help='Key type for signing key')
-    build_parser.add_argument('-o', '--outputs',
-                              choices=BUILD_OUTPUTS + ['all'],
-                              default='all',
-                              help='Which outputs to generate (default: all)')
-    build_parser.add_argument('-O', '--outdir',
-                              default=find_default_outdir(),
-                              help='''Base directory for build outputs
-                                   (default: '{}' under Genesis root). Note
-                                   that non-default directories must be
-                                   flashed, reconfigured, etc. manually.
-                                   '''.format(BUILD_DIR_DEFAULT))
-    build_parser.add_argument('app', nargs='+',
-                              help='App or apps to build')
 
     # Parse build commands and add on internal settings.
-    #
-    # TODO: allow application override via --allow-overrides option.
     build_args = build_parser.parse_args(build_argv)
-    if build_args.outputs == 'all':
-        build_args.outputs = BUILD_OUTPUTS
-    else:
-        build_args.outputs = [build_args.outputs]
-    build_args.zephyr_base = find_zephyr_base()
-    build_args.zephyr_gcc_variant = 'zephyr'
-    # build_args.zephyr_sdk_install_dir = find_zephyr_sdk()
     sk_none = build_args.signing_key is None
     skt_none = build_args.signing_key_type is None
     if sk_none ^ skt_none:
@@ -213,31 +278,14 @@ def build(build_argv):
                                               MCUBOOT_DEV_KEY)
         build_args.signing_key_type = MCUBOOT_DEV_KEY_TYPE
         insecure_requested = True
-
-    build_warn_overrides(build_args)
-
-    # Create the build environments.
-    #
-    # Some of our config can be passed in the make command line, but not all of
-    # it. It can all be read from the build environment, though, so we just use
-    # that.
-    app_build_env = dict(os.environ)
-    for v in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
-        app_build_env[v.upper()] = getattr(build_args, v)
-    mcuboot_build_env = dict(app_build_env)
-    del mcuboot_build_env['CONF_FILE']
-    build_envs = {'app': app_build_env,
-                  'mcuboot': mcuboot_build_env}
+    make_do_overrides(build_args)
 
     # Run the builds.
+    build_envs = make_environments(build_args)
     for app in build_args.app:
-        makefile_dirs = {'app': find_app_root(app),
-                         'mcuboot': find_mcuboot_root()}
+        makefile_dirs = makefile_directories(app)
         for output in build_args.outputs:
-            outdir = os.path.join(build_args.outdir,
-                                  build_args.board,
-                                  app,
-                                  output)
+            outdir = make_outdir(build_args, app, output)
 
             # Application/mcuboot build command.
             cmd_build = ['make',
