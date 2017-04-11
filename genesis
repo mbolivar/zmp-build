@@ -244,7 +244,7 @@ def make_environments(args):
 
 def make_outdir(args, app, output):
     '''Get output (build) directory for an app output.'''
-    return os.path.join(args.outdir, args.board, app, output)
+    return os.path.join(args.outdir, app, args.board, output)
 
 
 #
