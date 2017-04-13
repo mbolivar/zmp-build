@@ -320,9 +320,10 @@ def build(build_argv):
                 word_size = ZEP2NEWT_BOARD_INFO[build_args.board]['word-size']
                 pad = ZEP2NEWT_BOARD_INFO[build_args.board]['pad']
                 unsigned_bin = os.path.join(outdir, 'zephyr.bin')
+                app_clean = os.path.basename(app.rstrip(os.path.sep))
                 signed_bin = os.path.join(
                     outdir,
-                    '{}-{}-signed.bin'.format(app, build_args.board))
+                    '{}-{}-signed.bin'.format(app_clean, build_args.board))
                 cmd_sign = ['/usr/bin/env', 'python3',
                             os.path.join(find_mcuboot_root(), ZEP2NEWT),
                             '--bin', shlex.quote(unsigned_bin),
