@@ -155,7 +155,6 @@ def make_add_args(make_based_parser, help_overrides={}):
 
     make_based_parser.add_argument(
         '-b', '--board',
-        choices=list(ZEP2NEWT_BOARD_INFO.keys()),
         default=BOARD_DEFAULT,
         help=arg_help['board'])
     make_based_parser.add_argument(
@@ -271,11 +270,26 @@ def build(build_argv):
     build_parser.add_argument('-t', '--signing-key-type',
                               choices=ZEP2NEWT_KEY_TYPES,
                               help='Key type for signing key')
+    build_parser.add_argument('--skip-signature',
+                              action='store_true',
+                              help="""If set, don't sign the resulting binary
+                                   for loading by mcuboot. Use of this option
+                                   implies -o app, and is incompatible with
+                                   the -K and -t options.""")
 
     # Parse build commands and add on internal settings.
     build_args = build_parser.parse_args(build_argv)
     sk_none = build_args.signing_key is None
     skt_none = build_args.signing_key_type is None
+    if build_args.skip_signature:
+        if not (sk_none and skt_none):
+            raise ValueError('{} is incompatible with {} and {}'.format(
+                '--skip-signature', '--signing-key', '--signing-key-type'))
+        build_args.outputs = 'app'
+    else:
+        if build_args.board not in ZEP2NEWT_BOARD_INFO:
+            raise ValueError("Can't sign image for {}; is {} missing?".format(
+                build_args.board, '--skip-signature'))
     if sk_none ^ skt_none:
         raise ValueError('{} and {} must both be given or both omitted'.format(
             '--signing-key', '--signing-key-type'))
@@ -291,6 +305,7 @@ def build(build_argv):
     for app in build_args.app:
         makefile_dirs = makefile_directories(app)
         for output in build_args.outputs:
+            signing_app = (output == 'app' and not build_args.skip_signature)
             outdir = make_outdir(build_args, app, output)
 
             # Application/mcuboot build command.
@@ -300,23 +315,24 @@ def build(build_argv):
                          'O={}'.format(shlex.quote(outdir))]
 
             # Application signing command.
-            vtoff = ZEP2NEWT_BOARD_INFO[build_args.board]['vtoff']
-            word_size = ZEP2NEWT_BOARD_INFO[build_args.board]['word-size']
-            pad = ZEP2NEWT_BOARD_INFO[build_args.board]['pad']
-            unsigned_bin = os.path.join(outdir, 'zephyr.bin')
-            signed_bin = os.path.join(
-                outdir,
-                '{}-{}-signed.bin'.format(app, build_args.board))
-            cmd_sign = ['/usr/bin/env', 'python3',
-                        os.path.join(find_mcuboot_root(), ZEP2NEWT),
-                        '--bin', shlex.quote(unsigned_bin),
-                        '--key', shlex.quote(build_args.signing_key),
-                        '--sig', build_args.signing_key_type,
-                        '--vtoff', hex(vtoff),
-                        '--word-size', str(word_size),
-                        '--pad', hex(pad),
-                        '--bit',
-                        '--out', shlex.quote(signed_bin)]
+            if signing_app:
+                vtoff = ZEP2NEWT_BOARD_INFO[build_args.board]['vtoff']
+                word_size = ZEP2NEWT_BOARD_INFO[build_args.board]['word-size']
+                pad = ZEP2NEWT_BOARD_INFO[build_args.board]['pad']
+                unsigned_bin = os.path.join(outdir, 'zephyr.bin')
+                signed_bin = os.path.join(
+                    outdir,
+                    '{}-{}-signed.bin'.format(app, build_args.board))
+                cmd_sign = ['/usr/bin/env', 'python3',
+                            os.path.join(find_mcuboot_root(), ZEP2NEWT),
+                            '--bin', shlex.quote(unsigned_bin),
+                            '--key', shlex.quote(build_args.signing_key),
+                            '--sig', build_args.signing_key_type,
+                            '--vtoff', hex(vtoff),
+                            '--word-size', str(word_size),
+                            '--pad', hex(pad),
+                            '--bit',
+                            '--out', shlex.quote(signed_bin)]
 
             if build_args.debug:
                 print('Running build:')
@@ -324,12 +340,12 @@ def build(build_argv):
                     print('\t{}={} \\'.format(b.upper(),
                                               getattr(build_args, b)))
                 print('\t' + ' '.join(cmd_build))
-                if output == 'app':
+                if signing_app:
                     print('\t' + ' '.join(cmd_sign))
 
             try:
                 subprocess.check_call(cmd_build, env=build_envs[output])
-                if output == 'app':
+                if signing_app:
                     subprocess.check_call(cmd_sign, env=build_envs[output])
                     if insecure_requested:
                         print('Warning: used insecure default signing key.',
