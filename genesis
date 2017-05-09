@@ -76,7 +76,7 @@ ZEP2NEWT_BOARD_INFO = {
     'frdm_k64f': {
         'vtoff': 0x200,
         'word-size': 8,
-        'pad': 0x20000,
+        'pad': 0x60000,
     },
 
     'nrf52840_pca10056': {
