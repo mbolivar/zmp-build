@@ -5,6 +5,7 @@ import itertools
 import multiprocessing
 import os
 import os.path
+import re
 import shlex
 import subprocess
 import sys
@@ -21,7 +22,7 @@ BOARD_DEFAULT = '96b_nitrogen'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'     # Development-only signing key.
-MCUBOOT_DEV_KEY_TYPE = 'RSA'              # Key type of development key.
+MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
 CONFIGURATOR_DEFAULT = 'menuconfig'
 
 # Other default values.
@@ -52,15 +53,17 @@ BUILD_OVERRIDES = ['zephyr_base',
 # - mcuboot: Genesis bootloader, not signed and must be flashed.
 BUILD_OUTPUTS = ['app', 'mcuboot']
 
-# zep2newt.py state.
+# imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
+IMGTOOL = os.path.join('scripts', 'imgtool.py')
+
+# mcuboot-related board-specific state.
 #
 # FIXME: there are too many copies of this information.
 #
 # All of this configuration really needs to live in one place (not here), and
 # to get propagated to each application and mcuboot's own build systems at
 # "configuration" time.
-ZEP2NEWT = os.path.join('scripts', 'zep2newt.py')
-ZEP2NEWT_BOARD_INFO = {
+MCUBOOT_BOARD_INFO = {
     '96b_nitrogen': {
         'vtoff': 0x100,
         'word-size': 4,
@@ -85,7 +88,6 @@ ZEP2NEWT_BOARD_INFO = {
         'pad': 0x6c000,
     },
 }
-ZEP2NEWT_KEY_TYPES = ['SHA256', 'RSA']
 
 CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
                  'oldconfig', 'silentoldconfig', 'defconfig', 'savedefconfig',
@@ -257,6 +259,10 @@ def make_outdir(args, app, output):
 #
 
 
+def build_version_is_semver(version):
+    return re.match('^\d+[.]\d+[.]\d+$', version) is not None
+
+
 def build(build_argv):
     insecure_requested = False
 
@@ -273,9 +279,10 @@ def build(build_argv):
                                    binary. WARNING: if not given, an INSECURE
                                    default key is used which should NOT be
                                    used for production images.''')
-    build_parser.add_argument('-t', '--signing-key-type',
-                              choices=ZEP2NEWT_KEY_TYPES,
-                              help='Key type for signing key')
+    build_parser.add_argument('-V', '--imgtool-version',
+                              help='''Image version in X.Y.Z semantic
+                                   versioning format (default: {})'''.format(
+                                       MCUBOOT_IMGTOOL_VERSION_DEFAULT))
     build_parser.add_argument('--skip-signature',
                               action='store_true',
                               help="""If set, don't sign the resulting binary
@@ -285,25 +292,27 @@ def build(build_argv):
 
     # Parse build commands and add on internal settings.
     build_args = build_parser.parse_args(build_argv)
-    sk_none = build_args.signing_key is None
-    skt_none = build_args.signing_key_type is None
     if build_args.skip_signature:
-        if not (sk_none and skt_none):
-            raise ValueError('{} is incompatible with {} and {}'.format(
-                '--skip-signature', '--signing-key', '--signing-key-type'))
+        if build_args.signing_key is not None:
+            raise ValueError('{} is incompatible with {}'.format(
+                '--skip-signature', '--signing-key'))
         build_args.outputs = 'app'
     else:
-        if build_args.board not in ZEP2NEWT_BOARD_INFO:
+        if build_args.board not in MCUBOOT_BOARD_INFO:
             raise ValueError("Can't sign image for {}; is {} missing?".format(
                 build_args.board, '--skip-signature'))
-    if sk_none ^ skt_none:
-        raise ValueError('{} and {} must both be given or both omitted'.format(
-            '--signing-key', '--signing-key-type'))
     if build_args.signing_key is None:
         build_args.signing_key = os.path.join(find_mcuboot_root(),
                                               MCUBOOT_DEV_KEY)
-        build_args.signing_key_type = MCUBOOT_DEV_KEY_TYPE
         insecure_requested = True
+    if build_args.imgtool_version is None:
+        print('No --imgtool-version specified, using {}'.format(
+                  MCUBOOT_IMGTOOL_VERSION_DEFAULT),
+              file=sys.stderr)
+        build_args.imgtool_version = MCUBOOT_IMGTOOL_VERSION_DEFAULT
+    if not build_version_is_semver(build_args.imgtool_version):
+        raise ValueError('{} is not in semantic versioning format'.format(
+            build_args.imgtool_version))
     make_do_overrides(build_args)
 
     # Run the builds.
@@ -322,24 +331,26 @@ def build(build_argv):
 
             # Application signing command.
             if signing_app:
-                vtoff = ZEP2NEWT_BOARD_INFO[build_args.board]['vtoff']
-                word_size = ZEP2NEWT_BOARD_INFO[build_args.board]['word-size']
-                pad = ZEP2NEWT_BOARD_INFO[build_args.board]['pad']
+                vtoff = MCUBOOT_BOARD_INFO[build_args.board]['vtoff']
+                word_size = MCUBOOT_BOARD_INFO[build_args.board]['word-size']
+                pad = MCUBOOT_BOARD_INFO[build_args.board]['pad']
                 unsigned_bin = os.path.join(outdir, 'zephyr.bin')
                 app_clean = os.path.basename(app.rstrip(os.path.sep))
                 signed_bin = os.path.join(
                     outdir,
                     '{}-{}-signed.bin'.format(app_clean, build_args.board))
+                version = build_args.imgtool_version
                 cmd_sign = ['/usr/bin/env', 'python3',
-                            os.path.join(find_mcuboot_root(), ZEP2NEWT),
-                            '--bin', shlex.quote(unsigned_bin),
+                            os.path.join(find_mcuboot_root(), IMGTOOL),
+                            'sign',
                             '--key', shlex.quote(build_args.signing_key),
-                            '--sig', build_args.signing_key_type,
-                            '--vtoff', hex(vtoff),
-                            '--word-size', str(word_size),
-                            '--pad', hex(pad),
-                            '--bit',
-                            '--out', shlex.quote(signed_bin)]
+                            '--align', str(word_size),
+                            '--header-size', str(vtoff),
+                            '--included-header',
+                            '--pad', str(pad),
+                            '--version', shlex.quote(version),
+                            shlex.quote(unsigned_bin),
+                            shlex.quote(signed_bin)]
 
             if build_args.debug:
                 print('Running build:')
