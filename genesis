@@ -350,10 +350,15 @@ def build(build_args):
                                      build_args.board, output)
 
             # Application/mcuboot build command.
+            #
+            # The Zephyr build's output exports are useful during the build for
+            # signing images, and also afterwards, e.g. when deciding how to
+            # flash the binaries.
             cmd_build = ['make',
                          '-C', shlex.quote(makefile_dirs[output]),
                          '-j', str(build_args.jobs),
                          'O={}'.format(shlex.quote(outdir))]
+            cmd_exports = cmd_build + ['outputexports']
 
             # Application signing command.
             if signing_app:
@@ -378,18 +383,25 @@ def build(build_args):
                             shlex.quote(unsigned_bin),
                             shlex.quote(signed_bin)]
 
-            if build_args.debug:
-                print('Running build:')
-                for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
-                    print('\t{}={} \\'.format(b.upper(),
-                                              getattr(build_args, b)))
-                print('\t' + ' '.join(cmd_build))
-                if signing_app:
-                    print('\t' + ' '.join(cmd_sign))
-
             try:
+                if build_args.debug:
+                    print('Building Zephyr:')
+                    for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+                        print('\t{}={} \\'.format(b.upper(),
+                                                  getattr(build_args, b)))
+                    print('\t' + ' '.join(cmd_build))
                 subprocess.check_call(cmd_build, env=build_envs[output])
+                if build_args.debug:
+                    print('Generating outputexports:')
+                    for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+                        print('\t{}={} \\'.format(b.upper(),
+                                                  getattr(build_args, b)))
+                    print('\t' + ' '.join(cmd_exports))
+                subprocess.check_call(cmd_exports, env=build_envs[output])
                 if signing_app:
+                    if build_args.debug:
+                        print('Signing application binary:')
+                        print('\t' + ' '.join(cmd_sign))
                     subprocess.check_call(cmd_sign, env=build_envs[output])
                     if insecure_requested:
                         print('Warning: used insecure default signing key.',
