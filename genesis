@@ -314,8 +314,6 @@ def build_add_parser(cmd_parsers):
     }
     CommonArguments.add_arguments(build_parser,
                                   help_overrides=build_help_overrides)
-    build_parser.add_argument('--debug', action='store_true',
-                              help='If set, print debugging output')
     build_parser.add_argument('-K', '--signing-key',
                               help='''Path to signing key for application
                                    binary. WARNING: if not given, an INSECURE
@@ -471,6 +469,12 @@ def configure(configure_args):
                              'O={}'.format(shlex.quote(outdir)),
                              configure_args.configurator]
             try:
+                if configure_args.debug:
+                    print('Configuring build:')
+                    for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
+                        print('\t{}={} \\'.format(b.upper(),
+                                                  getattr(configure_args, b)))
+                    print('\t' + ' '.join(cmd_configure))
                 subprocess.check_call(cmd_configure,
                                       env=configure_envs[output])
             except subprocess.CalledProcessError as e:
@@ -487,6 +491,8 @@ def main():
     # Parsing is split into a multilevel structure based on the top-level
     # command. The first level is $scriptname [-h] $command [command_arg ...]
     top_parser = argparse.ArgumentParser()
+    top_parser.add_argument('--debug', default=False, action='store_true',
+                            help='If set, print extra debugging information.')
     cmd_parsers = top_parser.add_subparsers(help='Command', dest='cmd')
     build_add_parser(cmd_parsers)
     configure_add_parser(cmd_parsers)
@@ -503,8 +509,13 @@ def main():
     try:
         command_handlers[args.cmd](args)
     except Exception as e:
-        print('Error: {}'.format(e), file=sys.stderr)
-        sys.exit(1)
+        if args.debug:
+            raise
+        else:
+            re_run = '"{} --debug {} ..."'.format(PROGRAM, args.cmd)
+            print('Error: {}'.format(e), file=sys.stderr)
+            print('Re-run as {} for a stack trace.'.format(re_run),
+                  file=sys.stderr)
 
 
 if __name__ == '__main__':
