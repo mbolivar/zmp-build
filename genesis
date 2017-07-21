@@ -56,37 +56,13 @@ BUILD_OUTPUTS = ['app', 'mcuboot']
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 IMGTOOL = os.path.join('scripts', 'imgtool.py')
 
-# mcuboot-related board-specific state.
-#
-# FIXME: there are too many copies of this information.
-#
-# All of this configuration really needs to live in one place (not here), and
-# to get propagated to each application and mcuboot's own build systems at
-# "configuration" time.
-MCUBOOT_BOARD_INFO = {
-    '96b_nitrogen': {
-        'vtoff': 0x100,
-        'word-size': 4,
-        'pad': 0x34000,
-    },
-
-    '96b_carbon': {
-        'vtoff': 0x100,
-        'word-size': 1,
-        'pad': 0x20000,
-    },
-
-    'frdm_k64f': {
-        'vtoff': 0x200,
-        'word-size': 8,
-        'pad': 0x60000,
-    },
-
-    'nrf52840_pca10056': {
-        'vtoff': 0x100,
-        'word-size': 4,
-        'pad': 0x6c000,
-    },
+# mcuboot-related SoC-specific state.
+# TODO: get these values from ZephyrExports when they're available there.
+MCUBOOT_WORD_SIZES = {
+    '96b_nitrogen': '4',
+    '96b_carbon': '1',
+    'frdm_k64f': '8',
+    'nrf52840_pca10056': '4',
 }
 
 CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
@@ -123,6 +99,11 @@ def find_app_root(app_name):
 def find_mcuboot_root():
     '''Get absolute path of mcuboot repository.'''
     return os.path.join(find_genesis_root(), MCUBOOT_PATH)
+
+
+def find_sdk_build_root():
+    '''Get absolute path to SDK build directory.'''
+    return os.path.dirname(os.path.realpath(__file__))
 
 
 def find_default_outdir():
@@ -212,6 +193,48 @@ class CommonArguments(object):
                                 choices=BUILD_OUTPUTS + ['all'],
                                 default='all',
                                 help=arg_help['--outputs'])
+
+
+#
+# Zephyr build system glue
+#
+
+
+class ZephyrExports(object):
+    """Represents exported variables from a Zephyr build.
+    """
+
+    EXPORT = 'Makefile.export'
+    HELPER = 'print-value.mk'
+
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+
+    def get(self, variable):
+        """Return the value of a Zephyr build variable."""
+        export_path = os.path.join(self.output_dir, ZephyrExports.EXPORT)
+        helper_path = os.path.join(find_sdk_build_root(), ZephyrExports.HELPER)
+        cmd_print_val = ['make',
+                         '-f', shlex.quote(export_path),
+                         '-f', shlex.quote(helper_path),
+                         shlex.quote('print-{}'.format(variable))]
+        try:
+            value = subprocess.check_output(cmd_print_val,
+                                            stderr=subprocess.DEVNULL)
+            return str(value, 'utf-8').strip()
+        except subprocess.CalledProcessError as e:
+            msg = "{} is missing or empty in {}".format(variable, export_path)
+            raise ValueError(msg)
+
+    def get_ensure_int(self, variable):
+        """Return the value of a Zephyr build variable as a string,
+        after ensuring it is an integer."""
+        return str(int(self.get(variable), base=0))
+
+    def get_ensure_hex(self, variable):
+        """Return the value of a Zephyr build variable as a hex string,
+        after ensuring it is an integer."""
+        return hex(int(self.get(variable), base=0))
 
 
 #
@@ -310,6 +333,29 @@ def build_add_parser(cmd_parsers):
                                    the -K and -t options.""")
 
 
+def build_sign_command(build_args, outdir, app):
+    exports = ZephyrExports(outdir)
+    vtoff = exports.get_ensure_hex('CONFIG_TEXT_SECTION_OFFSET')
+    pad = exports.get_ensure_hex('FLASH_AREA_IMAGE_0_SIZE')
+    unsigned_bin = os.path.join(outdir, 'zephyr.bin')
+    app_clean = os.path.basename(app.rstrip(os.path.sep))
+    signed_bin = os.path.join(outdir,
+                              '{}-{}-signed.bin'.format(app_clean,
+                                                        build_args.board))
+    version = build_args.imgtool_version
+    return ['/usr/bin/env', 'python3',
+            os.path.join(find_mcuboot_root(), IMGTOOL),
+            'sign',
+            '--key', shlex.quote(build_args.signing_key),
+            '--align', MCUBOOT_WORD_SIZES[build_args.board],
+            '--header-size', vtoff,
+            '--included-header',
+            '--pad', pad,
+            '--version', shlex.quote(version),
+            shlex.quote(unsigned_bin),
+            shlex.quote(signed_bin)]
+
+
 def build_version_is_semver(version):
     return re.match('^\d+[.]\d+[.]\d+$', version) is not None
 
@@ -323,9 +369,9 @@ def build(build_args):
                 '--skip-signature', '--signing-key'))
         build_args.outputs = 'app'
     else:
-        if build_args.board not in MCUBOOT_BOARD_INFO:
-            raise ValueError("Can't sign image for {}; is {} missing?".format(
-                build_args.board, '--skip-signature'))
+        if build_args.board not in MCUBOOT_WORD_SIZES:
+            raise ValueError("unknown flash word size for {}".format(
+                build_args.board))
     if build_args.signing_key is None:
         build_args.signing_key = os.path.join(find_mcuboot_root(),
                                               MCUBOOT_DEV_KEY)
@@ -360,29 +406,6 @@ def build(build_args):
                          'O={}'.format(shlex.quote(outdir))]
             cmd_exports = cmd_build + ['outputexports']
 
-            # Application signing command.
-            if signing_app:
-                vtoff = MCUBOOT_BOARD_INFO[build_args.board]['vtoff']
-                word_size = MCUBOOT_BOARD_INFO[build_args.board]['word-size']
-                pad = MCUBOOT_BOARD_INFO[build_args.board]['pad']
-                unsigned_bin = os.path.join(outdir, 'zephyr.bin')
-                app_clean = os.path.basename(app.rstrip(os.path.sep))
-                signed_bin = os.path.join(
-                    outdir,
-                    '{}-{}-signed.bin'.format(app_clean, build_args.board))
-                version = build_args.imgtool_version
-                cmd_sign = ['/usr/bin/env', 'python3',
-                            os.path.join(find_mcuboot_root(), IMGTOOL),
-                            'sign',
-                            '--key', shlex.quote(build_args.signing_key),
-                            '--align', str(word_size),
-                            '--header-size', str(vtoff),
-                            '--included-header',
-                            '--pad', str(pad),
-                            '--version', shlex.quote(version),
-                            shlex.quote(unsigned_bin),
-                            shlex.quote(signed_bin)]
-
             try:
                 if build_args.debug:
                     print('Building Zephyr:')
@@ -398,7 +421,10 @@ def build(build_args):
                                                   getattr(build_args, b)))
                     print('\t' + ' '.join(cmd_exports))
                 subprocess.check_call(cmd_exports, env=build_envs[output])
+                # Note: generating the signing command requires some Zephyr
+                # build outputs.
                 if signing_app:
+                    cmd_sign = build_sign_command(build_args, outdir, app)
                     if build_args.debug:
                         print('Signing application binary:')
                         print('\t' + ' '.join(cmd_sign))
