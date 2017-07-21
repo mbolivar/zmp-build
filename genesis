@@ -259,18 +259,11 @@ def make_outdir(args, app, output):
 #
 
 
-def build_version_is_semver(version):
-    return re.match('^\d+[.]\d+[.]\d+$', version) is not None
+def build_add_parser(cmd_parsers):
+    build_help = 'Build Genesis application images'
+    build_parser = cmd_parsers.add_parser('build', help=build_help)
 
-
-def build(build_argv):
-    insecure_requested = False
-
-    # Build command parser.
     build_help_overrides = {'outputs': 'Which outputs to build (default: all)'}
-    build_parser = argparse.ArgumentParser(
-        prog=PROGRAM + ' build',
-        description='Build Genesis application images')
     make_add_args(build_parser, build_help_overrides)
     build_parser.add_argument('--debug', action='store_true',
                               help='If set, print debugging output')
@@ -290,8 +283,14 @@ def build(build_argv):
                                    implies -o app, and is incompatible with
                                    the -K and -t options.""")
 
-    # Parse build commands and add on internal settings.
-    build_args = build_parser.parse_args(build_argv)
+
+def build_version_is_semver(version):
+    return re.match('^\d+[.]\d+[.]\d+$', version) is not None
+
+
+def build(build_args):
+    insecure_requested = False
+
     if build_args.skip_signature:
         if build_args.signing_key is not None:
             raise ValueError('{} is incompatible with {}'.format(
@@ -380,12 +379,11 @@ def build(build_argv):
 #
 
 
-def configure(configure_argv):
-    configure_parser = argparse.ArgumentParser(
-        prog=PROGRAM + ' configure',
-        description='''Configure Genesis application images. If multiple apps
-                    are given, the configurators are run in the order the apps
-                    are specified.''')
+def configure_add_parser(cmd_parsers):
+    configure_help = '''Configure Genesis application images. If multiple apps
+                     are given, the configurators are run in the order the apps
+                     are specified.'''
+    configure_parser = cmd_parsers.add_parser('configure', help=configure_help)
     make_add_args(configure_parser)
     configure_parser.add_argument(
         '-C', '--configurator',
@@ -393,7 +391,8 @@ def configure(configure_argv):
         default=CONFIGURATOR_DEFAULT,
         help='Configure front-end (default: {})'.format(CONFIGURATOR_DEFAULT))
 
-    configure_args = configure_parser.parse_args(configure_argv)
+
+def configure(configure_args):
     make_do_overrides(configure_args)
     configure_envs = make_environments(configure_args)
     for app in configure_args.app:
@@ -421,25 +420,24 @@ def configure(configure_argv):
 def main():
     # Parsing is split into a multilevel structure based on the top-level
     # command. The first level is $scriptname [-h] $command [command_arg ...]
-    top_parser = argparse.ArgumentParser(
-        prog=PROGRAM,
-        description="Front-end to Genesis build system",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    top_parser.add_argument('command',
-                            choices=['build', 'configure'],
-                            help='Top level command')
-    top_parser.add_argument('command_args', nargs=argparse.REMAINDER,
-                            metavar='...', help='Command arguments')
-    top_args = top_parser.parse_args(ARGV)
+    top_parser = argparse.ArgumentParser()
+    cmd_parsers = top_parser.add_subparsers(help='Command', dest='cmd')
+    build_add_parser(cmd_parsers)
+    configure_add_parser(cmd_parsers)
 
-    # Dispatch to individual command handlers
+    args = top_parser.parse_args()
+    command_handlers = {
+        'build': build,
+        'configure': configure
+    }
+    if args.cmd is None:
+        commands = ', '.join(command_handlers.keys())
+        print('Missing command. Choices: {}'.format(commands), file=sys.stderr)
+        sys.exit(1)
     try:
-        if top_args.command == 'build':
-            return build(top_args.command_args)
-        elif top_args.command == 'configure':
-            return configure(top_args.command_args)
-    except ValueError as e:
-        print('Error:', e.args[0], file=sys.stderr)
+        command_handlers[args.cmd](args)
+    except Exception as e:
+        print('Error: {}'.format(e), file=sys.stderr)
         sys.exit(1)
 
 
