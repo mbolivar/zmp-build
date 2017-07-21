@@ -131,64 +131,87 @@ def find_default_outdir():
 
 
 #
-# Make helpers
+# Common arguments
 #
 
 
-def make_add_args(make_based_parser, help_overrides={}):
-    '''Add arguments to a parser for commands which shell out to a Makefile.'''
-    # These capture arguments that are needed by Zephyr makefiles, such as
-    # BOARD and CONF_FILE, as well as arguments that get passed to make itself.
-    # It's meant to cover the least common denominator only, depending on
-    # what's needed by the script's currently handled commands.
-    #
-    # TODO: allow application override for things like ZEPHYR_BASE via
-    # --allow-overrides option.
-    arg_help = {
-        'board': 'Zephyr board to target (default: {})'.format(BOARD_DEFAULT),
-        'conf-file': '''App (not mcuboot) configuration file
-                     (default: {})'''.format(CONF_FILE_DEFAULT),
-        'jobs': '''Number of jobs to run simultaneously (default: number of
-                available CPUs)''',
-        'keep-going': '''If set, keep running after the first build failure.
-                      Otherwise, exit on the first failure, with failing
-                      command's exit code.''',
-        'outdir': '''Build directory
-                  (default: '{}' under Genesis root).'''.format(
-                      BUILD_DIR_DEFAULT),
-        'outputs': 'Which outputs to target (default: all)',
-        'app': 'Genesis application(s) sources',
-        }
-    arg_help.update(help_overrides)
+class CommonArguments(object):
+    '''Helper class for arguments which are taken by multiple commands.'''
 
-    make_based_parser.add_argument(
-        '-b', '--board',
-        default=BOARD_DEFAULT,
-        help=arg_help['board'])
-    make_based_parser.add_argument(
-        '-c', '--conf-file',
-        default=CONF_FILE_DEFAULT,
-        help=arg_help['conf-file'])
-    make_based_parser.add_argument(
-        '-j', '--jobs',
-        type=int, default=BUILD_PARALLEL_DEFAULT,
-        help=arg_help['jobs'])
-    make_based_parser.add_argument(
-        '-k', '--keep-going',
-        action='store_true',
-        help=arg_help['keep-going'])
-    make_based_parser.add_argument(
-        '-O', '--outdir',
-        default=find_default_outdir(),
-        help=arg_help['outdir'])
-    make_based_parser.add_argument(
-        '-o', '--outputs',
-        choices=BUILD_OUTPUTS + ['all'],
-        default='all',
-        help=arg_help['outputs'])
-    make_based_parser.add_argument(
-        'app', nargs='+',
-        help=arg_help['app'])
+    ARG_HELP = {
+        # Generally useful.
+        '--board': '''Zephyr board to target
+                   (default: {})'''.format(BOARD_DEFAULT),
+        '--outdir': '''Build directory (default: '{}' under Genesis
+                    root).'''.format(BUILD_DIR_DEFAULT),
+        'app': 'Genesis application(s) sources',
+
+        # Needed to build, configure, etc. Zephyr.
+        '--conf-file': '''App (not mcuboot) configuration file
+                       (default: {})'''.format(CONF_FILE_DEFAULT),
+        '--jobs': '''Number of jobs to run simultaneously (default: number of
+                   available CPUs)''',
+        '--keep-going': '''If set, keep running after the first build failure.
+                         Otherwise, exit on the first failure, with failing
+                         command's exit code.''',
+        '--outputs': 'Which outputs to target (default: all)',
+        }
+
+    @staticmethod
+    def _whitelist(whitelist):
+        if whitelist is None:
+            return CommonArguments.ARG_HELP.keys()
+        else:
+            for arg in whitelist:
+                if arg not in CommonArguments.ARG_HELP:
+                    msg = 'internal error: unknown argument {}'.format(arg)
+                    raise ValueError(msg)
+            return whitelist
+
+    @staticmethod
+    def add_arguments(parser, help_overrides={}, whitelist=None):
+        arg_help = dict(CommonArguments.ARG_HELP)
+        arg_help.update(help_overrides)
+
+        whitelist = CommonArguments._whitelist(whitelist)
+
+        # These are generally useful for commands that operate on build
+        # artifacts.
+        if '--board' in whitelist:
+            parser.add_argument('-b', '--board',
+                                default=BOARD_DEFAULT,
+                                help=arg_help['--board'])
+        if '--outdir' in whitelist:
+            parser.add_argument('-O', '--outdir',
+                                default=find_default_outdir(),
+                                help=arg_help['--outdir'])
+        if 'app' in whitelist:
+            parser.add_argument('app', nargs='+', help=arg_help['app'])
+
+        # These are needed by commands that invoke 'make', like 'build' and
+        # 'configure'.
+        if '--conf-file' in whitelist:
+            parser.add_argument('-c', '--conf-file',
+                                default=CONF_FILE_DEFAULT,
+                                help=arg_help['--conf-file'])
+        if '--jobs' in whitelist:
+            parser.add_argument('-j', '--jobs',
+                                type=int, default=BUILD_PARALLEL_DEFAULT,
+                                help=arg_help['--jobs'])
+        if '--keep-going' in whitelist:
+            parser.add_argument('-k', '--keep-going',
+                                action='store_true',
+                                help=arg_help['--keep-going'])
+        if '--outputs' in whitelist:
+            parser.add_argument('-o', '--outputs',
+                                choices=BUILD_OUTPUTS + ['all'],
+                                default='all',
+                                help=arg_help['--outputs'])
+
+
+#
+# Make helpers
+#
 
 
 def make_warn_override(args, arg):
@@ -263,8 +286,11 @@ def build_add_parser(cmd_parsers):
     build_help = 'Build Genesis application images'
     build_parser = cmd_parsers.add_parser('build', help=build_help)
 
-    build_help_overrides = {'outputs': 'Which outputs to build (default: all)'}
-    make_add_args(build_parser, build_help_overrides)
+    build_help_overrides = {
+        '--outputs': 'Which outputs to build (default: all)'
+    }
+    CommonArguments.add_arguments(build_parser,
+                                  help_overrides=build_help_overrides)
     build_parser.add_argument('--debug', action='store_true',
                               help='If set, print debugging output')
     build_parser.add_argument('-K', '--signing-key',
@@ -384,7 +410,7 @@ def configure_add_parser(cmd_parsers):
                      are given, the configurators are run in the order the apps
                      are specified.'''
     configure_parser = cmd_parsers.add_parser('configure', help=configure_help)
-    make_add_args(configure_parser)
+    CommonArguments.add_arguments(configure_parser)
     configure_parser.add_argument(
         '-C', '--configurator',
         choices=CONFIGURATORS,
