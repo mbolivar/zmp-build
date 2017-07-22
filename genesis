@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import abc
 import argparse
 import itertools
 import multiprocessing
@@ -9,6 +10,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 #
 # Globals
@@ -235,6 +237,133 @@ class ZephyrExports(object):
         """Return the value of a Zephyr build variable as a hex string,
         after ensuring it is an integer."""
         return hex(int(self.get(variable), base=0))
+
+
+class ZephyrBinaryFlasher(abc.ABC):
+
+    @staticmethod
+    def create_flasher(flash_args):
+        '''Get a flasher instance suited to the configuration given in
+        flash_args.'''
+        app_outdir = find_app_outdir(flash_args.outdir, flash_args.app,
+                                     flash_args.board, 'app')
+        exports = ZephyrExports(app_outdir)
+        flash_script = exports.get('FLASH_SCRIPT')
+
+        for sub_cls in ZephyrBinaryFlasher.__subclasses__():
+            if sub_cls.is_equivalent_to(flash_script):
+                return sub_cls()
+        msg = 'no supported flasher equivalent to {}'.format(flash_script)
+        raise ValueError(msg)
+
+    @staticmethod
+    @abc.abstractmethod
+    def is_equivalent_to(zephyr_flash_script):
+        '''Check if this flasher is also able to flash the same types of
+        boards as a FLASH_SCRIPT in the Zephyr build system.'''
+
+    @abc.abstractmethod
+    def do_flash(self, flash_args, exports, mcuboot_quoted, app_quoted,
+                 app_offset, extra_quoted):
+        '''Low-level flash routine.'''
+
+    def _get_flash_common(self, flash_args):
+        app_outdir = find_app_outdir(flash_args.outdir, flash_args.app,
+                                     flash_args.board, 'app')
+        # It's fine to use the app's exports to flash mcuboot as well.
+        exports = ZephyrExports(app_outdir)
+        app_offset = hex(int(exports.get('FLASH_AREA_IMAGE_0_OFFSET'), base=0))
+        app_basename = os.path.basename(flash_args.app)
+        app_bin = '{}-{}-signed.bin'.format(app_basename, flash_args.board)
+        app_quoted = shlex.quote(os.path.join(app_outdir, app_bin))
+
+        mcuboot_outdir = find_app_outdir(flash_args.outdir, flash_args.app,
+                                         flash_args.board, 'mcuboot')
+        mcuboot_quoted = shlex.quote(os.path.join(mcuboot_outdir,
+                                                  'zephyr.bin'))
+
+        extra_quoted = [shlex.quote(e) for e in flash_args.extra]
+
+        return (exports, mcuboot_quoted, app_quoted, app_offset, extra_quoted)
+
+    def flash(self, flash_args):
+        '''Flash an image to a board, given the configuration in flash_args.'''
+        e, mq, aq, ao, eq = self._get_flash_common(flash_args)
+        self.do_flash(flash_args, e, mq, aq, ao, eq)
+
+
+class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
+
+    def do_flash(self, flash_args, exports, mcuboot_quoted, app_quoted,
+                 app_offset, extra_quoted):
+        # TODO: support non-DfuSe devices. As-is, we support STM32 extensions
+        # to the DFU protocol only.
+        #
+        # We ignore DFUUTIL_DFUSE_ADDR since we're doing a dual-image flash.
+        flash_base = exports.get_ensure_hex('CONFIG_FLASH_BASE_ADDRESS')
+        app_offset = exports.get_ensure_int('FLASH_AREA_IMAGE_0_OFFSET')
+        app_base = hex(int(flash_base, base=16) + int(app_offset))
+        pid = exports.get('DFUUTIL_PID')
+        pid_arg_quoted = '[{}]'.format(shlex.quote(pid))
+
+        cmd_flash_mcuboot = ['dfu-util',
+                             '-d', pid_arg_quoted,
+                             '-a', '0',
+                             '-s', '{}:force:mass-erase'.format(flash_base),
+                             '-D', mcuboot_quoted]
+        if flash_args.debug:
+            print('Flashing mcuboot:')
+            print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
+        subprocess.check_call(cmd_flash_mcuboot)
+
+        cmd_flash_app = ['dfu-util',
+                         '-d', pid_arg_quoted,
+                         '-a', '0',
+                         '-s', '{}:leave'.format(app_base),
+                         '-D', app_quoted]
+        if flash_args.debug:
+            print('Flashing signed application:')
+            print('\t{}'.format(' '.join(cmd_flash_app)))
+        subprocess.check_call(cmd_flash_app)
+
+    def is_equivalent_to(script):
+        return script == 'dfuutil.sh'
+
+
+class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
+
+    # Invoking pyocd-flashtool again quickly results in errors on some systems.
+    SLEEP_INTERVAL_SEC = 0.75
+
+    def do_flash(self, flash_args, exports, mcuboot_quoted, app_quoted,
+                 app_offset, extra_quoted):
+        target_quoted = shlex.quote(exports.get('PYOCD_TARGET'))
+
+        cmd_flash_mcuboot = (['pyocd-flashtool',
+                              '-t', target_quoted,
+                              '-ce',
+                              '-a', '0x0'] +
+                             extra_quoted +
+                             [mcuboot_quoted])
+        if flash_args.debug:
+            print('Flashing mcuboot:')
+            print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
+        subprocess.check_call(cmd_flash_mcuboot)
+
+        time.sleep(PyOcdBinaryFlasher.SLEEP_INTERVAL_SEC)
+
+        cmd_flash_app = (['pyocd-flashtool',
+                          '-t', target_quoted,
+                          '-a', app_offset] +
+                         extra_quoted +
+                         [app_quoted])
+        if flash_args.debug:
+            print('Flashing signed application:')
+            print('\t{}'.format(' '.join(cmd_flash_app)))
+        subprocess.check_call(cmd_flash_app)
+
+    def is_equivalent_to(script):
+        return script == 'pyocd.sh'
 
 
 #
@@ -483,6 +612,31 @@ def configure(configure_args):
 
 
 #
+# Flash
+#
+
+
+def flash_add_parser(cmd_parsers):
+    flash_help = 'Flash a bootloader and a signed application image to a board'
+    flash_parser = cmd_parsers.add_parser('flash', help=flash_help)
+    flash_whitelist = {'--board', '--outdir', 'app'}
+    CommonArguments.add_arguments(flash_parser, whitelist=flash_whitelist)
+    flash_parser.add_argument('-e', '--extra', default='',
+                              help='''Extra arguments to pass to the
+                                   flashing script''')
+
+
+def flash(flash_args):
+    if len(flash_args.app) > 1:
+        raise ValueError('only one application may be flashed at a time.')
+    flash_args.app = flash_args.app[0].rstrip(os.path.sep)
+    flash_args.extra = flash_args.extra.split()
+
+    flasher = ZephyrBinaryFlasher.create_flasher(flash_args)
+    flasher.flash(flash_args)
+
+
+#
 # main()
 #
 
@@ -496,11 +650,13 @@ def main():
     cmd_parsers = top_parser.add_subparsers(help='Command', dest='cmd')
     build_add_parser(cmd_parsers)
     configure_add_parser(cmd_parsers)
+    flash_add_parser(cmd_parsers)
 
     args = top_parser.parse_args()
     command_handlers = {
         'build': build,
-        'configure': configure
+        'configure': configure,
+        'flash': flash,
     }
     if args.cmd is None:
         commands = ', '.join(command_handlers.keys())
