@@ -332,8 +332,7 @@ class Command(abc.ABC):
         '--jobs': '''Number of jobs to run simultaneously (default: number of
                    available CPUs)''',
         '--keep-going': '''If set, keep running after the first build failure.
-                         Otherwise, exit on the first failure, with failing
-                         command's exit code.''',
+                         Otherwise, exit on the first failure.''',
         '--outputs': 'Which outputs to target (default: all)',
     }
 
