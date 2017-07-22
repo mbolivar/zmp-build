@@ -34,8 +34,11 @@ ZEPHYR_PATH = 'zephyr'
 ZEPHYR_SDK_PATH = os.path.join('sdk-prebuilts', 'zephyr-sdk')
 
 # Build configuration from command line options that overrides environment
-# variables.
-BUILD_OPTIONS = ['board', 'conf_file']
+# variables. Note that BOARD is special, since we can target multiple boards in
+# one script invocation, so we don't include it in this list.
+BUILD_OPTIONS = ['conf_file'
+                 # 'board',
+                 ]
 # Build configuration from internal values that overrides env. variables.
 # TODO: override SDK install dir when we can provide a prebuilt repository.
 BUILD_OVERRIDES = ['zephyr_base',
@@ -165,18 +168,22 @@ class ZephyrExports(object):
 
 class ZephyrBinaryFlasher(abc.ABC):
 
+    def __init__(self, board, app, outdir, debug=False):
+        self.board = board
+        self.app = app
+        self.outdir = outdir
+        self.debug_print = debug
+
     @staticmethod
-    def create_flasher(flash_args):
-        '''Get a flasher instance suited to the configuration given in
-        flash_args.'''
-        app_outdir = find_app_outdir(flash_args.outdir, flash_args.app,
-                                     flash_args.board, 'app')
+    def create_flasher(board, app, outdir, debug=False):
+        '''Get a flasher instance suited to the given configuration.'''
+        app_outdir = find_app_outdir(outdir, app, board, 'app')
         exports = ZephyrExports(app_outdir)
         flash_script = exports.get('FLASH_SCRIPT')
 
         for sub_cls in ZephyrBinaryFlasher.__subclasses__():
             if sub_cls.is_equivalent_to(flash_script):
-                return sub_cls()
+                return sub_cls(board, app, outdir, debug=debug)
         msg = 'no supported flasher equivalent to {}'.format(flash_script)
         raise ValueError(msg)
 
@@ -187,38 +194,37 @@ class ZephyrBinaryFlasher(abc.ABC):
         boards as a FLASH_SCRIPT in the Zephyr build system.'''
 
     @abc.abstractmethod
-    def do_flash(self, flash_args, exports, mcuboot_quoted, app_quoted,
-                 app_offset, extra_quoted):
+    def do_flash(self, exports, mcuboot_quoted, app_quoted, app_offset,
+                 extra_quoted):
         '''Low-level flash routine.'''
 
-    def _get_flash_common(self, flash_args):
-        app_outdir = find_app_outdir(flash_args.outdir, flash_args.app,
-                                     flash_args.board, 'app')
+    def _get_flash_common(self, extra_args):
+        app_outdir = find_app_outdir(self.outdir, self.app, self.board, 'app')
         # It's fine to use the app's exports to flash mcuboot as well.
         exports = ZephyrExports(app_outdir)
         app_offset = hex(int(exports.get('FLASH_AREA_IMAGE_0_OFFSET'), base=0))
-        app_basename = os.path.basename(flash_args.app)
-        app_bin = '{}-{}-signed.bin'.format(app_basename, flash_args.board)
+        app_bin = '{}-{}-signed.bin'.format(os.path.basename(self.app),
+                                            self.board)
         app_quoted = shlex.quote(os.path.join(app_outdir, app_bin))
 
-        mcuboot_outdir = find_app_outdir(flash_args.outdir, flash_args.app,
-                                         flash_args.board, 'mcuboot')
+        mcuboot_outdir = find_app_outdir(self.outdir, self.app, self.board,
+                                         'mcuboot')
         mcuboot_quoted = shlex.quote(os.path.join(mcuboot_outdir,
                                                   'zephyr.bin'))
 
-        extra_quoted = [shlex.quote(e) for e in flash_args.extra]
+        extra_quoted = [shlex.quote(e) for e in extra_args]
 
         return (exports, mcuboot_quoted, app_quoted, app_offset, extra_quoted)
 
-    def flash(self, flash_args):
-        '''Flash an image to a board, given the configuration in flash_args.'''
-        e, mq, aq, ao, eq = self._get_flash_common(flash_args)
-        self.do_flash(flash_args, e, mq, aq, ao, eq)
+    def flash(self, extra_args):
+        '''Flash the board, taking a list of extra arguments to pass on to
+        the underlying flashing tool.'''
+        self.do_flash(*self._get_flash_common(extra_args))
 
 
 class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
 
-    def do_flash(self, flash_args, exports, mcuboot_quoted, app_quoted,
+    def do_flash(self, exports, mcuboot_quoted, app_quoted,
                  app_offset, extra_quoted):
         # TODO: support non-DfuSe devices. As-is, we support STM32 extensions
         # to the DFU protocol only.
@@ -235,7 +241,7 @@ class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
                              '-a', '0',
                              '-s', '{}:force:mass-erase'.format(flash_base),
                              '-D', mcuboot_quoted]
-        if flash_args.debug:
+        if self.debug_print:
             print('Flashing mcuboot:')
             print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
         subprocess.check_call(cmd_flash_mcuboot)
@@ -245,7 +251,7 @@ class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
                          '-a', '0',
                          '-s', '{}:leave'.format(app_base),
                          '-D', app_quoted]
-        if flash_args.debug:
+        if self.debug_print:
             print('Flashing signed application:')
             print('\t{}'.format(' '.join(cmd_flash_app)))
         subprocess.check_call(cmd_flash_app)
@@ -259,7 +265,7 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
     # Invoking pyocd-flashtool again quickly results in errors on some systems.
     SLEEP_INTERVAL_SEC = 0.75
 
-    def do_flash(self, flash_args, exports, mcuboot_quoted, app_quoted,
+    def do_flash(self, exports, mcuboot_quoted, app_quoted,
                  app_offset, extra_quoted):
         target_quoted = shlex.quote(exports.get('PYOCD_TARGET'))
 
@@ -269,7 +275,7 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
                               '-a', '0x0'] +
                              extra_quoted +
                              [mcuboot_quoted])
-        if flash_args.debug:
+        if self.debug_print:
             print('Flashing mcuboot:')
             print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
         subprocess.check_call(cmd_flash_mcuboot)
@@ -281,7 +287,7 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
                           '-a', app_offset] +
                          extra_quoted +
                          [app_quoted])
-        if flash_args.debug:
+        if self.debug_print:
             print('Flashing signed application:')
             print('\t{}'.format(' '.join(cmd_flash_app)))
         subprocess.check_call(cmd_flash_app)
@@ -300,8 +306,9 @@ class Command(abc.ABC):
 
     HELP = {
         # Generally useful.
-        '--board': '''Zephyr board to target
-                   (default: {})'''.format(BOARD_DEFAULT),
+        '--board': '''Zephyr board to target (default: {}). This may be
+                   given multiple times to target additional boards.'''.format(
+                       BOARD_DEFAULT),
         '--outdir': '''Build directory (default: '{}' under Genesis
                     root).'''.format(BUILD_DIR_DEFAULT),
         'app': 'Genesis application(s) sources',
@@ -371,10 +378,12 @@ class Command(abc.ABC):
         '''Display a warning message.'''
         print(*args, sep=sep, end=end, file=self.stderr, flush=flush)
 
-    def dbg_make_cmd(self, msg, cmd):
+    def dbg_make_cmd(self, msg, cmd, board=None):
         '''Special case helper for debugging invocations of make.'''
         if self.arguments.debug:
             self.dbg('{}:'.format(msg))
+            if board is not None:
+                self.dbg('\tBOARD={} \\'.format(board))
             for arg in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
                 env_var = self.arg_to_env_var(arg)
                 val = getattr(self.arguments, arg)
@@ -398,7 +407,8 @@ class Command(abc.ABC):
         # These are generally useful for commands that operate on build
         # artifacts.
         if '--board' in self.whitelist:
-            parser.add_argument('-b', '--board', default=BOARD_DEFAULT,
+            parser.add_argument('-b', '--board', dest='boards',
+                                default=[], action='append',
                                 help=self.help('--board'))
         if '--outdir' in self.whitelist:
             parser.add_argument('-O', '--outdir',
@@ -448,11 +458,26 @@ class Command(abc.ABC):
 
         The environments are returned in a dictionary, with keys 'app'
         and 'mcuboot' as appropriate. The returned dictionary is empty
-        if '--outputs' is not in the whitelist.'''
+        if '--outputs' is not in the whitelist.
+
+        The environments have BOARD unset when --board is whitelisted,
+        but otherwise have the same value as the parent environment. It
+        is up to the user to set this value appropriately.'''
         # There's no whitelisting for 'arguments' which can't be overridden.
         self.arguments.zephyr_base = find_zephyr_base()
         self.arguments.zephyr_gcc_variant = 'zephyr'
         # self.arguments.zephyr_sdk_install_dir = find_zephyr_sdk()
+
+        base_env = dict(os.environ)
+
+        if '--board' in self.whitelist:
+            if len(self.arguments.boards) == 0:
+                self.arguments.boards = [BOARD_DEFAULT]
+            if 'BOARD' in os.environ:
+                if [os.environ['BOARD']] != self.arguments.boards:
+                    self.wrn('Ignoring BOARD={}: building for {}'.format(
+                        os.environ['BOARD'], self.arguments.boards))
+                del base_env['BOARD']
 
         if '--outputs' in self.whitelist:
             if self.arguments.outputs == 'all':
@@ -460,7 +485,7 @@ class Command(abc.ABC):
             else:
                 self.arguments.outputs = [self.arguments.outputs]
 
-            app_build_env = dict(os.environ)
+            app_build_env = dict(base_env)
             forced_settings = {arg: getattr(self.arguments, arg) for arg in
                                itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES)}
             for arg, val in forced_settings.items():
@@ -545,9 +570,9 @@ class Build(Command):
                     '--skip-signature', '--signing-key'))
             self.arguments.outputs = 'app'
         else:
-            if self.arguments.board not in MCUBOOT_WORD_SIZES:
-                raise ValueError("unknown flash word size for {}".format(
-                    self.arguments.board))
+            for b in self.arguments.boards:
+                if b not in MCUBOOT_WORD_SIZES:
+                    raise ValueError("{}: unknown flash word size".format(b))
         if self.arguments.signing_key is None:
             self.arguments.signing_key = os.path.join(find_mcuboot_root(),
                                                       MCUBOOT_DEV_KEY)
@@ -567,15 +592,15 @@ class Build(Command):
         mcuboot = find_mcuboot_root()
 
         # Run the builds.
-        for app in self.arguments.app:
-            makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
-            for output in self.arguments.outputs:
-                self.do_one_build(app, output, makefile_dirs[output])
+        for board in self.arguments.boards:
+            for app in self.arguments.app:
+                makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
+                for output in self.arguments.outputs:
+                    self.do_build(board, app, output, makefile_dirs[output])
 
-    def do_one_build(self, app, output, makefile_dir):
+    def do_build(self, board, app, output, makefile_dir):
         signing_app = (output == 'app' and not self.arguments.skip_signature)
-        outdir = find_app_outdir(self.arguments.outdir, app,
-                                 self.arguments.board, output)
+        outdir = find_app_outdir(self.arguments.outdir, app, board, output)
 
         # Application/mcuboot build command.
         #
@@ -587,17 +612,20 @@ class Build(Command):
                      '-j', str(self.arguments.jobs),
                      'O={}'.format(shlex.quote(outdir))]
         cmd_exports = cmd_build + ['outputexports']
-        build_env = self.build_envs[output]
+        build_env = dict(self.build_envs[output])
+        build_env['BOARD'] = board
 
         try:
-            self.dbg_make_cmd('Building {} image'.format(output), cmd_build)
+            self.dbg_make_cmd('Building {} image'.format(output),
+                              cmd_build, board=board)
             subprocess.check_call(cmd_build, env=build_env)
-            self.dbg_make_cmd('Generating outputexports', cmd_exports)
+            self.dbg_make_cmd('Generating outputexports',
+                              cmd_exports, board=board)
             subprocess.check_call(cmd_exports, env=build_env)
             # Note: generating the signing command requires some Zephyr
             # build outputs.
             if signing_app:
-                cmd_sign = self.sign_command(app, outdir)
+                cmd_sign = self.sign_command(board, app, outdir)
                 self.dbg('Signing application binary:')
                 self.dbg('\t' + ' '.join(cmd_sign))
                 subprocess.check_call(cmd_sign, env=build_env)
@@ -608,21 +636,20 @@ class Build(Command):
             if not self.arguments.keep_going:
                 raise
 
-    def sign_command(self, app, outdir):
+    def sign_command(self, board, app, outdir):
         exports = ZephyrExports(outdir)
         vtoff = exports.get_ensure_hex('CONFIG_TEXT_SECTION_OFFSET')
         pad = exports.get_ensure_hex('FLASH_AREA_IMAGE_0_SIZE')
         unsigned_bin = os.path.join(outdir, 'zephyr.bin')
         app_clean = os.path.basename(app.rstrip(os.path.sep))
-        app_bin_name = '{}-{}-signed.bin'.format(app_clean,
-                                                 self.arguments.board)
+        app_bin_name = '{}-{}-signed.bin'.format(app_clean, board)
         signed_bin = os.path.join(outdir, app_bin_name)
         version = self.arguments.imgtool_version
         return ['/usr/bin/env', 'python3',
                 os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
                 'sign',
                 '--key', shlex.quote(self.arguments.signing_key),
-                '--align', MCUBOOT_WORD_SIZES[self.arguments.board],
+                '--align', MCUBOOT_WORD_SIZES[board],
                 '--header-size', vtoff,
                 '--included-header',
                 '--pad', pad,
@@ -672,24 +699,26 @@ class Configure(Command):
         self.prep_for_run()
         mcuboot = find_mcuboot_root()
 
-        for app in configure_args.app:
-            makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
-            for output in configure_args.outputs:
-                self.do_one_configure(app, output, makefile_dirs[output])
+        for board in self.arguments.boards:
+            for app in configure_args.app:
+                makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
+                for output in configure_args.outputs:
+                    self.do_configure(board, app, output,
+                                      makefile_dirs[output])
 
-    def do_one_configure(self, app, output, makefile_dir):
-        outdir = find_app_outdir(self.arguments.outdir, app,
-                                 self.arguments.board, output)
+    def do_configure(self, board, app, output, makefile_dir):
+        outdir = find_app_outdir(self.arguments.outdir, app, board, output)
         cmd_configure = ['make',
                          '-C', shlex.quote(makefile_dir),
                          '-j', str(self.arguments.jobs),
                          'O={}'.format(shlex.quote(outdir)),
                          self.arguments.configurator]
-        configure_env = self.configure_envs[output]
+        configure_env = dict(self.configure_envs[output])
+        configure_env['BOARD'] = board
 
         try:
             self.dbg_make_cmd('Configuring {} for {}'.format(output, app),
-                              cmd_configure)
+                              cmd_configure, board=board)
             subprocess.check_call(cmd_configure, env=configure_env)
         except subprocess.CalledProcessError as e:
             if not self.arguments.keep_going:
@@ -732,8 +761,11 @@ class Flash(Command):
         self.arguments = flash_args
         self.prep_for_run()
 
-        flasher = ZephyrBinaryFlasher.create_flasher(self.arguments)
-        flasher.flash(self.arguments)
+        for board in self.arguments.boards:
+            flasher = ZephyrBinaryFlasher.create_flasher(
+                board, self.arguments.app, self.arguments.outdir,
+                self.arguments.debug)
+            flasher.flash(self.arguments.extra)
 
 
 #
