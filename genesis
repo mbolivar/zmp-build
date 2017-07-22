@@ -78,6 +78,14 @@ CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
 # menuconfig is portable and the one most examples are based off of.
 CONFIGURATOR_DEFAULT = 'menuconfig'
 
+# The documentation source repository, as well as the name of the root of the
+# build hierarchy under BUILD_DIR_DEFAULT or where the user places it.
+DOC_PATH = 'doc'
+# Supported formats for the generated documentation.
+DOC_OUTPUT_FORMATS = ['html',  'dirhtml', 'singlehtml']
+# We expect most users to read the docs as multiple HTML pages.
+DOC_FORMAT_DEFAULT = 'html'
+
 
 #
 # Path management
@@ -112,6 +120,11 @@ def find_mcuboot_root():
 def find_sdk_build_root():
     '''Get absolute path to SDK build directory.'''
     return os.path.dirname(os.path.realpath(__file__))
+
+
+def find_doc_root():
+    '''Get absolute path of documentation source code repository.'''
+    return os.path.join(find_genesis_root(), DOC_PATH)
 
 
 def find_default_outdir():
@@ -386,8 +399,9 @@ class Command(abc.ABC):
                 self.dbg('\tBOARD={} \\'.format(board))
             for arg in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
                 env_var = self.arg_to_env_var(arg)
-                val = getattr(self.arguments, arg)
-                self.dbg('\t{}={} \\'.format(env_var, val))
+                val = getattr(self.arguments, arg, None)
+                if val is not None:
+                    self.dbg('\t{}={} \\'.format(env_var, val))
             self.dbg('\t' + ' '.join(cmd))
 
     #
@@ -766,6 +780,62 @@ class Flash(Command):
                 board, self.arguments.app, self.arguments.outdir,
                 self.arguments.debug)
             flasher.flash(self.arguments.extra)
+
+
+#
+# Build documentation
+#
+
+
+class BuildDoc(Command):
+
+    def __init__(self, *args, **kwargs):
+        kwargs['whitelist'] = {'--outdir', '--jobs', '--keep-going'}
+        super(BuildDoc, self).__init__(*args, **kwargs)
+
+    @property
+    def command_name(self):
+        return 'build-doc'
+
+    @property
+    def command_help(self):
+        return '''Convert documentation to its output format.'''
+
+    def add_arguments(self, parser):
+        super(BuildDoc, self).add_arguments(parser)
+        # Note -o / --outputs has a different meaning than usual. It's close
+        # enough that we want people to think of it as the same idea.
+        parser.add_argument(
+            '-o', '--outputs',
+            choices=DOC_OUTPUT_FORMATS + ['all'],
+            default=DOC_FORMAT_DEFAULT,
+            help='''What format to generate the
+                  documentation in (default: {})'''.format(
+                      DOC_FORMAT_DEFAULT))
+
+    def prep_for_run(self):
+        if self.arguments.outputs == 'all':
+            self.arguments.outputs = DOC_OUTPUT_FORMATS
+        else:
+            self.arguments.outputs = [self.arguments.outputs]
+        super(BuildDoc, self).prep_for_run()
+
+    def invoke(self, build_doc_args):
+        self.arguments = build_doc_args
+        self.prep_for_run()
+
+        build_base = os.path.join(self.arguments.outdir, DOC_PATH)
+        for output in self.arguments.outputs:
+            # Example outdir: outdir/doc/html/
+            outdir = os.path.join(build_base, output)
+            cmd_build_doc = ['make',
+                             '-C', shlex.quote(find_doc_root()),
+                             '-j', str(self.arguments.jobs),
+                             'OUTDIR={}'.format(shlex.quote(outdir)),
+                             shlex.quote(output)]
+            msg = 'Building documentation in {} format'.format(output)
+            self.dbg_make_cmd(msg, cmd_build_doc)
+            subprocess.check_call(cmd_build_doc)
 
 
 #
