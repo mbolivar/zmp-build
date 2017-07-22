@@ -19,26 +19,19 @@ import time
 PROGRAM = sys.argv[0]
 ARGV = sys.argv[1:]
 
-# Default values for command line options.
+# We could be smarter about this (search for .repo, e.g.), but it seems
+# unnecessary.
+GENESIS_ROOT = os.path.abspath(os.path.dirname(__file__))
+
+# Default values shared by multiple commands.
 BOARD_DEFAULT = '96b_nitrogen'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
-MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'     # Development-only signing key.
-MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
-CONFIGURATOR_DEFAULT = 'menuconfig'
-
-# Other default values.
-BUILD_DIR_DEFAULT = 'outdir'              # relative to genesis root.
 
 # Checked out paths for important repositories relative to Genesis root.
 # TODO: parse these from the repo manifest, for robustness, at some point.
 ZEPHYR_PATH = 'zephyr'
 ZEPHYR_SDK_PATH = os.path.join('sdk-prebuilts', 'zephyr-sdk')
-MCUBOOT_PATH = 'mcuboot'
-
-# We could be smarter about this (search for .repo, e.g.), but it seems
-# unnecessary.
-GENESIS_ROOT = os.path.abspath(os.path.dirname(__file__))
 
 # Build configuration from command line options that overrides environment
 # variables.
@@ -49,15 +42,22 @@ BUILD_OVERRIDES = ['zephyr_base',
                    'zephyr_gcc_variant',
                    # 'zephyr_sdk_install_dir'
                    ]
-
 # What types of build outputs to produce.
 # - app: Genesis application, which can be signed for flashing or FOTA update.
 # - mcuboot: Genesis bootloader, not signed and must be flashed.
 BUILD_OUTPUTS = ['app', 'mcuboot']
+# The name of the directory which is the default root of the build hierarchy,
+# relative to the .repo root.
+BUILD_DIR_DEFAULT = 'outdir'
 
+# Where mcuboot is relative to the .repo top level.
+MCUBOOT_PATH = 'mcuboot'
+# Development-only firmware binary signing key.
+MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'
+# Version to write to signed binaries when none is specified.
+MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
-IMGTOOL = os.path.join('scripts', 'imgtool.py')
-
+MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 # mcuboot-related SoC-specific state.
 # TODO: get these values from ZephyrExports when they're available there.
 MCUBOOT_WORD_SIZES = {
@@ -67,10 +67,13 @@ MCUBOOT_WORD_SIZES = {
     'nrf52840_pca10056': '4',
 }
 
+# Programs which 'configure' can use to generate Zephyr .config files.
 CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
                  'oldconfig', 'silentoldconfig', 'defconfig', 'savedefconfig',
                  'allnoconfig', 'allyesconfig', 'alldefconfig', 'randconfig',
                  'listnewconfig', 'olddefconfig']
+# menuconfig is portable and the one most examples are based off of.
+CONFIGURATOR_DEFAULT = 'menuconfig'
 
 
 #
@@ -471,7 +474,7 @@ def build_sign_command(build_args, outdir, app):
                                                         build_args.board))
     version = build_args.imgtool_version
     return ['/usr/bin/env', 'python3',
-            os.path.join(find_mcuboot_root(), IMGTOOL),
+            os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
             'sign',
             '--key', shlex.quote(build_args.signing_key),
             '--align', MCUBOOT_WORD_SIZES[build_args.board],
