@@ -122,14 +122,14 @@ def find_app_outdir(outdir, app, board, output):
 
 
 #
-# Common arguments
+# Common command policy
 #
 
 
-class CommonArguments(object):
-    '''Helper class for arguments which are taken by multiple commands.'''
+class Command(object):
+    '''Helper class for coordinating argument handling across commands.'''
 
-    ARG_HELP = {
+    HELP = {
         # Generally useful.
         '--board': '''Zephyr board to target
                    (default: {})'''.format(BOARD_DEFAULT),
@@ -151,20 +151,20 @@ class CommonArguments(object):
     @staticmethod
     def _whitelist(whitelist):
         if whitelist is None:
-            return CommonArguments.ARG_HELP.keys()
+            return Command.HELP.keys()
         else:
             for arg in whitelist:
-                if arg not in CommonArguments.ARG_HELP:
+                if arg not in Command.HELP:
                     msg = 'internal error: unknown argument {}'.format(arg)
                     raise ValueError(msg)
             return whitelist
 
     @staticmethod
     def add_arguments(parser, help_overrides={}, whitelist=None):
-        arg_help = dict(CommonArguments.ARG_HELP)
+        arg_help = dict(Command.HELP)
         arg_help.update(help_overrides)
 
-        whitelist = CommonArguments._whitelist(whitelist)
+        whitelist = Command._whitelist(whitelist)
 
         # These are generally useful for commands that operate on build
         # artifacts.
@@ -198,6 +198,66 @@ class CommonArguments(object):
                                 choices=BUILD_OUTPUTS + ['all'],
                                 default='all',
                                 help=arg_help['--outputs'])
+
+    @staticmethod
+    def prep_for_run(args, whitelist=None, warn_file=sys.stderr):
+        '''Clean up common arguments and prepare to run the command.
+
+        Clean up the representation on some commands, add values for
+        'arguments' that don't have options yet, and optionally return
+        build environments to run commands in.
+
+        If '--outputs' is whitelisted, one or more of the following
+        environments will be returned for generating the output, as
+        determined by args.outputs:
+
+        - 'app', to run make on zephyr application directories
+        - 'mcuboot', to run make on mcuboot (as a Zephyr target)
+
+        The environments are returned in a dictionary, with keys 'app'
+        and 'mcuboot' as appropriate. The returned dictionary is empty
+        if '--outputs' is not in the whitelist.'''
+        whitelist = Command._whitelist(whitelist)
+
+        # There's no whitelisting for 'arguments' which can't be overridden.
+        args.zephyr_base = find_zephyr_base()
+        args.zephyr_gcc_variant = 'zephyr'
+        # args.zephyr_sdk_install_dir = find_zephyr_sdk()
+
+        if '--outputs' in whitelist:
+            args.outputs = (BUILD_OUTPUTS if args.outputs == 'all'
+                            else [args.outputs])
+
+            app_build_env = dict(os.environ)
+            forced_settings = {arg: getattr(args, arg) for arg in
+                               itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES)}
+            for arg, val in forced_settings.items():
+                env_var = Command._arg_to_env_var(arg)
+                Command._warn_if_overridden(arg, val, env_var,
+                                            warn_file=warn_file)
+                app_build_env[env_var] = val
+
+            mcuboot_build_env = dict(app_build_env)
+            del mcuboot_build_env['CONF_FILE']
+
+            envs = {'app': app_build_env, 'mcuboot': mcuboot_build_env}
+
+            return {k: v for k, v in envs.items() if k in args.outputs}
+        else:
+            return {}
+
+    @staticmethod
+    def _arg_to_env_var(arg):
+        return arg.upper()
+
+    @staticmethod
+    def _warn_if_overridden(arg, val, env_var, warn_file=sys.stderr):
+        if env_var not in os.environ or val == os.environ[env_var]:
+            return
+        env_val = os.environ[env_var]
+        print('Warning: overriding {}:'.format(env_var), file=warn_file)
+        print('\tenvironment value: {}'.format(env_val), file=warn_file)
+        print('\toverridden to:     {}'.format(val),     file=warn_file)
 
 
 #
@@ -370,69 +430,6 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
 
 
 #
-# Make helpers
-#
-
-
-def make_warn_override(args, arg):
-    arg_val = getattr(args, arg)
-    env_var = arg.upper()
-    if env_var in os.environ and arg_val != os.environ[env_var]:
-        print('Warning: overriding {}:'.format(env_var),
-              file=sys.stderr)
-        print('\tenvironment value: {}'.format(os.environ[env_var]),
-              file=sys.stderr)
-        print('\tbuilding with:     {}'.format(arg_val),
-              file=sys.stderr)
-
-
-def make_warn_overrides(args):
-    '''Warn on values overridden from the environment.
-
-    Looks for environment variables relevant to the Zephyr or
-    application build (BOARD, etc.), and warns on values that are
-    overridden by Genesis.'''
-    for b in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
-        make_warn_override(args, b)
-
-
-def make_do_overrides(args):
-    if args.outputs == 'all':
-        args.outputs = BUILD_OUTPUTS
-    else:
-        args.outputs = [args.outputs]
-    args.zephyr_base = find_zephyr_base()
-    args.zephyr_gcc_variant = 'zephyr'
-    # args.zephyr_sdk_install_dir = find_zephyr_sdk()
-
-    make_warn_overrides(args)
-
-
-def makefile_directories(app):
-    '''Get paths to application and mcuboot Makefile directories for an app.
-
-    These are returned in a dictionary, with keys 'app' and 'mcuboot'.'''
-    return {'app': find_app_root(app),
-            'mcuboot': find_mcuboot_root()}
-
-
-def make_environments(args):
-    '''Create environments for invoking make on an application.
-
-    In general, multiple environments are needed: one for running make
-    for the app itself, and another for running make on the app's
-    mcuboot build.  These are returned in a dictionary, with keys 'app'
-    and 'mcuboot'.'''
-    app_build_env = dict(os.environ)
-    for v in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
-        app_build_env[v.upper()] = getattr(args, v)
-    mcuboot_build_env = dict(app_build_env)
-    del mcuboot_build_env['CONF_FILE']
-    return {'app': app_build_env,
-            'mcuboot': mcuboot_build_env}
-
-
-#
 # Build
 #
 
@@ -444,8 +441,7 @@ def build_add_parser(cmd_parsers):
     build_help_overrides = {
         '--outputs': 'Which outputs to build (default: all)'
     }
-    CommonArguments.add_arguments(build_parser,
-                                  help_overrides=build_help_overrides)
+    Command.add_arguments(build_parser, help_overrides=build_help_overrides)
     build_parser.add_argument('-K', '--signing-key',
                               help='''Path to signing key for application
                                    binary. WARNING: if not given, an INSECURE
@@ -514,12 +510,12 @@ def build(build_args):
     if not build_version_is_semver(build_args.imgtool_version):
         raise ValueError('{} is not in semantic versioning format'.format(
             build_args.imgtool_version))
-    make_do_overrides(build_args)
+    build_envs = Command.prep_for_run(build_args)
 
     # Run the builds.
-    build_envs = make_environments(build_args)
     for app in build_args.app:
-        makefile_dirs = makefile_directories(app)
+        makefile_dirs = {'app': find_app_root(app),
+                         'mcuboot': find_mcuboot_root()}
         for output in build_args.outputs:
             signing_app = (output == 'app' and not build_args.skip_signature)
             outdir = find_app_outdir(build_args.outdir, app,
@@ -579,7 +575,7 @@ def configure_add_parser(cmd_parsers):
                      are given, the configurators are run in the order the apps
                      are specified.'''
     configure_parser = cmd_parsers.add_parser('configure', help=configure_help)
-    CommonArguments.add_arguments(configure_parser)
+    Command.add_arguments(configure_parser)
     configure_parser.add_argument(
         '-C', '--configurator',
         choices=CONFIGURATORS,
@@ -588,10 +584,10 @@ def configure_add_parser(cmd_parsers):
 
 
 def configure(configure_args):
-    make_do_overrides(configure_args)
-    configure_envs = make_environments(configure_args)
+    configure_envs = Command.prep_for_run(configure_args)
     for app in configure_args.app:
-        makefile_dirs = makefile_directories(app)
+        makefile_dirs = {'app': find_app_root(app),
+                         'mcuboot': find_mcuboot_root()}
         for output in configure_args.outputs:
             outdir = find_app_outdir(configure_args.outdir, app,
                                      configure_args.board, output)
@@ -623,7 +619,7 @@ def flash_add_parser(cmd_parsers):
     flash_help = 'Flash a bootloader and a signed application image to a board'
     flash_parser = cmd_parsers.add_parser('flash', help=flash_help)
     flash_whitelist = {'--board', '--outdir', 'app'}
-    CommonArguments.add_arguments(flash_parser, whitelist=flash_whitelist)
+    Command.add_arguments(flash_parser, whitelist=flash_whitelist)
     flash_parser.add_argument('-e', '--extra', default='',
                               help='''Extra arguments to pass to the
                                    flashing script''')
