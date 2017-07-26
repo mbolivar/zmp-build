@@ -769,6 +769,7 @@ class Flash(Command):
 
         self.arguments.app = self.arguments.app[0].rstrip(os.path.sep)
         self.arguments.extra = self.arguments.extra.split()
+        super(Flash, self).prep_for_run()
 
     def invoke(self, flash_args):
         self.arguments = flash_args
