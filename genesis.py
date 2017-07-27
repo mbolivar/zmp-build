@@ -824,14 +824,14 @@ class BuildDoc(Command):
         self.arguments = build_doc_args
         self.prep_for_run()
 
+        # Default build_base is outdir/doc/; sphinx builders will generate
+        # subdirectories for each output, e.g. outdir/doc/{html,dirhtml}.
         build_base = os.path.join(self.arguments.outdir, DOC_PATH)
         for output in self.arguments.outputs:
-            # Example outdir: outdir/doc/html/
-            outdir = os.path.join(build_base, output)
             cmd_build_doc = ['make',
                              '-C', shlex.quote(find_doc_root()),
                              '-j', str(self.arguments.jobs),
-                             'OUTDIR={}'.format(shlex.quote(outdir)),
+                             'OUTDIR={}'.format(shlex.quote(build_base)),
                              shlex.quote(output)]
             msg = 'Building documentation in {} format'.format(output)
             self.dbg_make_cmd(msg, cmd_build_doc)
