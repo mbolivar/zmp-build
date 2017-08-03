@@ -747,7 +747,7 @@ class Flash(Command):
 
     def __init__(self, *args, **kwargs):
         kwargs['whitelist'] = {'--board', '--outdir', 'app'}
-        super(Flash, self).__init__(*args, *kwargs)
+        super(Flash, self).__init__(*args, **kwargs)
 
     @property
     def command_name(self):
