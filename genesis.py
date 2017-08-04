@@ -25,6 +25,7 @@ GENESIS_ROOT = os.path.abspath(os.path.dirname(__file__))
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = '96b_nitrogen'
+ZEPHYR_GCC_VARIANT_DEFAULT = 'zephyr'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 
@@ -36,13 +37,13 @@ ZEPHYR_SDK_PATH = os.path.join('sdk-prebuilts', 'zephyr-sdk')
 # Build configuration from command line options that overrides environment
 # variables. Note that BOARD is special, since we can target multiple boards in
 # one script invocation, so we don't include it in this list.
-BUILD_OPTIONS = ['conf_file'
+BUILD_OPTIONS = ['conf_file',
+                 'zephyr_gcc_variant',
                  # 'board',
                  ]
 # Build configuration from internal values that overrides env. variables.
 # TODO: override SDK install dir when we can provide a prebuilt repository.
 BUILD_OVERRIDES = ['zephyr_base',
-                   'zephyr_gcc_variant',
                    # 'zephyr_sdk_install_dir'
                    ]
 # What types of build outputs to produce.
@@ -327,6 +328,8 @@ class Command(abc.ABC):
         'app': 'Genesis application(s) sources',
 
         # Needed to build, configure, etc. Zephyr.
+        '--zephyr-gcc-variant': '''Toolchain variant used by Zephyr
+                       (default: {})'''.format(ZEPHYR_GCC_VARIANT_DEFAULT),
         '--conf-file': '''App (not mcuboot) configuration file
                        (default: {})'''.format(CONF_FILE_DEFAULT),
         '--jobs': '''Number of jobs to run simultaneously (default: number of
@@ -432,6 +435,10 @@ class Command(abc.ABC):
 
         # These are needed by commands that invoke 'make', like 'build' and
         # 'configure'.
+        if '--zephyr-gcc-variant' in self.whitelist:
+            parser.add_argument('-z', '--zephyr-gcc-variant',
+                                default=ZEPHYR_GCC_VARIANT_DEFAULT,
+                                help=self.help('--zephyr-gcc-variant'))
         if '--conf-file' in self.whitelist:
             parser.add_argument('-c', '--conf-file', default=CONF_FILE_DEFAULT,
                                 help=self.help('--conf-file'))
@@ -478,7 +485,6 @@ class Command(abc.ABC):
         is up to the user to set this value appropriately.'''
         # There's no whitelisting for 'arguments' which can't be overridden.
         self.arguments.zephyr_base = find_zephyr_base()
-        self.arguments.zephyr_gcc_variant = 'zephyr'
         # self.arguments.zephyr_sdk_install_dir = find_zephyr_sdk()
 
         base_env = dict(os.environ)
