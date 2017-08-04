@@ -208,8 +208,8 @@ class ZephyrBinaryFlasher(abc.ABC):
         boards as a FLASH_SCRIPT in the Zephyr build system.'''
 
     @abc.abstractmethod
-    def do_flash(self, exports, mcuboot_quoted, app_quoted, app_offset,
-                 extra_quoted):
+    def do_flash(self, device_id, exports, mcuboot_quoted, app_quoted,
+                 app_offset, extra_quoted):
         '''Low-level flash routine.'''
 
     def _get_flash_common(self, extra_args):
@@ -230,15 +230,15 @@ class ZephyrBinaryFlasher(abc.ABC):
 
         return (exports, mcuboot_quoted, app_quoted, app_offset, extra_quoted)
 
-    def flash(self, extra_args):
+    def flash(self, device_id, extra_args):
         '''Flash the board, taking a list of extra arguments to pass on to
         the underlying flashing tool.'''
-        self.do_flash(*self._get_flash_common(extra_args))
+        self.do_flash(device_id, *self._get_flash_common(extra_args))
 
 
 class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
 
-    def do_flash(self, exports, mcuboot_quoted, app_quoted,
+    def do_flash(self, device_id, exports, mcuboot_quoted, app_quoted,
                  app_offset, extra_quoted):
         # TODO: support non-DfuSe devices. As-is, we support STM32 extensions
         # to the DFU protocol only.
@@ -249,22 +249,27 @@ class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
         app_base = hex(int(flash_base, base=16) + int(app_offset))
         pid = exports.get('DFUUTIL_PID')
         pid_arg_quoted = '[{}]'.format(shlex.quote(pid))
+        serial = []
+        if device_id:
+            serial += ['-S', device_id]
 
-        cmd_flash_mcuboot = ['dfu-util',
-                             '-d', pid_arg_quoted,
-                             '-a', '0',
-                             '-s', '{}:force:mass-erase'.format(flash_base),
-                             '-D', mcuboot_quoted]
+        cmd_flash_mcuboot = (['dfu-util',
+                              '-d', pid_arg_quoted,
+                              '-a', '0',
+                              '-s', '{}:force:mass-erase'.format(flash_base),
+                              '-D', mcuboot_quoted] +
+                             serial)
         if self.debug_print:
             print('Flashing mcuboot:')
             print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
         subprocess.check_call(cmd_flash_mcuboot)
 
-        cmd_flash_app = ['dfu-util',
-                         '-d', pid_arg_quoted,
-                         '-a', '0',
-                         '-s', '{}:leave'.format(app_base),
-                         '-D', app_quoted]
+        cmd_flash_app = (['dfu-util',
+                          '-d', pid_arg_quoted,
+                          '-a', '0',
+                          '-s', '{}:leave'.format(app_base),
+                          '-D', app_quoted] +
+                         serial)
         if self.debug_print:
             print('Flashing signed application:')
             print('\t{}'.format(' '.join(cmd_flash_app)))
@@ -279,14 +284,18 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
     # Invoking pyocd-flashtool again quickly results in errors on some systems.
     SLEEP_INTERVAL_SEC = 0.75
 
-    def do_flash(self, exports, mcuboot_quoted, app_quoted,
+    def do_flash(self, device_id, exports, mcuboot_quoted, app_quoted,
                  app_offset, extra_quoted):
         target_quoted = shlex.quote(exports.get('PYOCD_TARGET'))
+        board_id = []
+        if device_id:
+            board_id += ['-b', device_id]
 
         cmd_flash_mcuboot = (['pyocd-flashtool',
                               '-t', target_quoted,
                               '-ce',
                               '-a', '0x0'] +
+                             board_id +
                              extra_quoted +
                              [mcuboot_quoted])
         if self.debug_print:
@@ -299,6 +308,7 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
         cmd_flash_app = (['pyocd-flashtool',
                           '-t', target_quoted,
                           '-a', app_offset] +
+                         board_id +
                          extra_quoted +
                          [app_quoted])
         if self.debug_print:
@@ -765,6 +775,12 @@ class Flash(Command):
 
     def add_arguments(self, parser):
         super(Flash, self).add_arguments(parser)
+        parser.add_argument('-d', '--device-id', dest='device_ids',
+                            default=[], action='append',
+                            help='''Device identifier given to the flashing
+                                  tool. Should only be used with one board
+                                  target. This may be given multiple times
+                                  to target additional devices.''')
         parser.add_argument('-e', '--extra', default='',
                             help='''Extra arguments to pass to the
                                  flashing tool''')
@@ -772,6 +788,9 @@ class Flash(Command):
     def prep_for_run(self):
         if len(self.arguments.app) > 1:
             raise ValueError('only one application may be flashed at a time.')
+        if self.arguments.device_ids and len(self.arguments.boards) > 1:
+            raise ValueError('only one board target may be used when '
+                             'specifying device ids')
 
         self.arguments.app = self.arguments.app[0].rstrip(os.path.sep)
         self.arguments.extra = self.arguments.extra.split()
@@ -781,12 +800,18 @@ class Flash(Command):
         self.arguments = flash_args
         self.prep_for_run()
 
-        for board in self.arguments.boards:
-            flasher = ZephyrBinaryFlasher.create_flasher(
-                board, self.arguments.app, self.arguments.outdir,
-                self.arguments.debug)
-            flasher.flash(self.arguments.extra)
-
+        if self.arguments.device_ids:
+            for device_id in self.arguments.device_ids:
+                flasher = ZephyrBinaryFlasher.create_flasher(
+                    self.arguments.boards[0], self.arguments.app,
+                    self.arguments.outdir, self.arguments.debug)
+                flasher.flash(device_id, self.arguments.extra)
+        else:
+            for board in self.arguments.boards:
+                flasher = ZephyrBinaryFlasher.create_flasher(
+                    board, self.arguments.app, self.arguments.outdir,
+                    self.arguments.debug)
+                flasher.flash(None, self.arguments.extra)
 
 #
 # Build documentation
