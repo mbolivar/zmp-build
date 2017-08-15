@@ -69,6 +69,7 @@ MCUBOOT_WORD_SIZES = {
     '96b_carbon': '1',
     'frdm_k64f': '8',
     'nrf52840_pca10056': '4',
+    'nrf52_blenano2': '4',
 }
 
 # Programs which 'configure' can use to generate Zephyr .config files.
