@@ -503,10 +503,10 @@ class Command(abc.ABC):
         if '--board' in self.whitelist:
             if len(self.arguments.boards) == 0:
                 self.arguments.boards = [BOARD_DEFAULT]
-            if 'BOARD' in os.environ:
-                if [os.environ['BOARD']] != self.arguments.boards:
-                    self.wrn('Ignoring BOARD={}: building for {}'.format(
-                        os.environ['BOARD'], self.arguments.boards))
+            if 'BOARD' in base_env:
+                if [base_env['BOARD']] != self.arguments.boards:
+                    self.wrn('Ignoring BOARD={}: targeting {}'.format(
+                        base_env['BOARD'], self.arguments.boards))
                 del base_env['BOARD']
 
         if '--outputs' in self.whitelist:
@@ -520,7 +520,7 @@ class Command(abc.ABC):
                                itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES)}
             for arg, val in forced_settings.items():
                 env_var = self.arg_to_env_var(arg)
-                self._wrn_if_overridden(arg, val, env_var)
+                self._wrn_if_overridden(base_env, env_var, val)
                 app_build_env[env_var] = val
 
             mcuboot_build_env = dict(app_build_env)
@@ -540,10 +540,10 @@ class Command(abc.ABC):
     def arg_to_env_var(self, arg):
         return arg.upper()
 
-    def _wrn_if_overridden(self, arg, val, env_var):
-        if env_var not in os.environ or val == os.environ[env_var]:
+    def _wrn_if_overridden(self, env, env_var, val):
+        if env_var not in env or val == env[env_var]:
             return
-        env_val = os.environ[env_var]
+        env_val = env[env_var]
         self.wrn('Warning: overriding {}:'.format(env_var))
         self.wrn('\tenvironment value: {}'.format(env_val))
         self.wrn('\toverridden to:     {}'.format(val))
