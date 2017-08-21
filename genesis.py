@@ -2,10 +2,10 @@
 
 import abc
 import argparse
-import itertools
 import multiprocessing
 import os
 import os.path
+import platform
 import re
 import shlex
 import subprocess
@@ -25,7 +25,7 @@ GENESIS_ROOT = os.path.abspath(os.path.dirname(__file__))
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = '96b_nitrogen'
-ZEPHYR_GCC_VARIANT_DEFAULT = 'zephyr'
+ZEPHYR_GCC_VARIANT_DEFAULT = 'gccarmemb'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 
@@ -41,11 +41,6 @@ BUILD_OPTIONS = ['conf_file',
                  'zephyr_gcc_variant',
                  # 'board',
                  ]
-# Build configuration from internal values that overrides env. variables.
-# TODO: override SDK install dir when we can provide a prebuilt repository.
-BUILD_OVERRIDES = ['zephyr_base',
-                   # 'zephyr_sdk_install_dir'
-                   ]
 # What types of build outputs to produce.
 # - app: Genesis application, which can be signed for flashing or FOTA update.
 # - mcuboot: Genesis bootloader, not signed and must be flashed.
@@ -104,9 +99,19 @@ def find_zephyr_base():
     return os.path.join(find_genesis_root(), ZEPHYR_PATH)
 
 
-def find_zephyr_sdk():
-    '''Get absolute path of Genesis Zephyr SDK.'''
-    return os.path.join(find_genesis_root(), ZEPHYR_SDK_PATH)
+def find_arm_none_eabi_gcc():
+    '''Get absolute path of Genesis prebuilt GCC ARM Embedded.'''
+    platform_subdirectories = {
+        'Linux': 'linux',
+        'Darwin': 'mac',
+        }
+    subdir = platform_subdirectories[platform.system()]
+    return os.path.join(find_genesis_root(),
+                        'sdk-build',
+                        'other',
+                        'genesis-sdk-prebuilt',
+                        'arm-none-eabi-gcc',
+                        subdir)
 
 
 def find_app_root(app_name):
@@ -341,6 +346,11 @@ class Command(abc.ABC):
         # Needed to build, configure, etc. Zephyr.
         '--zephyr-gcc-variant': '''Toolchain variant used by Zephyr
                        (default: {})'''.format(ZEPHYR_GCC_VARIANT_DEFAULT),
+        '--prebuilt-toolchain': '''Whether to use a pre-built toolchain
+                       provided with Genesis, if one exists (default: 'yes').
+                       Currently, only a pre-built GCC ARM Embedded toolchain
+                       is provided. Set to 'no' to prevent overriding the
+                       toolchain's location in the calling environment.''',
         '--conf-file': '''App (not mcuboot) configuration file
                        (default: {})'''.format(CONF_FILE_DEFAULT),
         '--jobs': '''Number of jobs to run simultaneously (default: number of
@@ -404,17 +414,18 @@ class Command(abc.ABC):
         '''Display a warning message.'''
         print(*args, sep=sep, end=end, file=self.stderr, flush=flush)
 
-    def dbg_make_cmd(self, msg, cmd, board=None):
+    def dbg_make_cmd(self, msg, cmd, env=None, board=None):
         '''Special case helper for debugging invocations of make.'''
         if self.arguments.debug:
             self.dbg('{}:'.format(msg))
             if board is not None:
                 self.dbg('\tBOARD={} \\'.format(board))
-            for arg in itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES):
-                env_var = self.arg_to_env_var(arg)
-                val = getattr(self.arguments, arg, None)
-                if val is not None:
-                    self.dbg('\t{}={} \\'.format(env_var, val))
+            if env is not None:
+                for arg in self.make_overrides:
+                    env_var = self.arg_to_env_var(arg)
+                    if env_var not in env:
+                        continue
+                    self.dbg('\t{}={} \\'.format(env_var, env[env_var]))
             self.dbg('\t' + ' '.join(cmd))
 
     #
@@ -450,6 +461,10 @@ class Command(abc.ABC):
             parser.add_argument('-z', '--zephyr-gcc-variant',
                                 default=ZEPHYR_GCC_VARIANT_DEFAULT,
                                 help=self.help('--zephyr-gcc-variant'))
+        if '--prebuilt-toolchain' in self.whitelist:
+            parser.add_argument('--prebuilt-toolchain', default='yes',
+                                choices=['yes', 'no', 'y', 'n'],
+                                help=self.help('--prebuilt-toolchain'))
         if '--conf-file' in self.whitelist:
             parser.add_argument('-c', '--conf-file', default=CONF_FILE_DEFAULT,
                                 help=self.help('--conf-file'))
@@ -465,6 +480,15 @@ class Command(abc.ABC):
                                 choices=BUILD_OUTPUTS + ['all'], default='all',
                                 help=self.help('--outputs'))
 
+        # The following toolchain-related arguments must all be in the
+        # whitelist, if any of them are.
+        toolchain_wl = ['--outputs',
+                        '--zephyr-gcc-variant',
+                        '--prebuilt-toolchain']
+        toolchain_wl_ok = (all(x in self.whitelist for x in toolchain_wl) or
+                           not any(x in self.whitelist for x in toolchain_wl))
+        assert toolchain_wl_ok, 'internal error: bad toolchain whitelist'
+
     def help(self, argument):
         '''Get help text for a given argument. Subclasses may override.'''
         if argument not in Command.HELP:
@@ -473,6 +497,14 @@ class Command(abc.ABC):
             raise ValueError(msg)
         return Command.HELP[argument]
 
+    def _prep_use_prebuilt(self):
+        if self.arguments.zephyr_gcc_variant == 'gccarmemb':
+            self._prep_use_prebuilt_gccarmemb()
+
+    def _prep_use_prebuilt_gccarmemb(self):
+        gccarmemb = find_arm_none_eabi_gcc()
+        self.make_overrides['gccarmemb_toolchain_path'] = gccarmemb
+
     def prep_for_run(self):
         '''Finish setting up arguments and prepare run environments.
 
@@ -480,24 +512,13 @@ class Command(abc.ABC):
         arguments, add values for 'arguments' that don't have options
         yet, and retrieve build environments to run commands in.
 
-        If '--outputs' was whitelisted, one or more of the following
-        environments will be returned for generating the output, as
-        determined by args.outputs:
-
-        - 'app', to run make on zephyr application directories
-        - 'mcuboot', to run make on mcuboot (as a Zephyr target)
-
-        The environments are returned in a dictionary, with keys 'app'
-        and 'mcuboot' as appropriate. The returned dictionary is empty
-        if '--outputs' is not in the whitelist.
-
-        The environments have BOARD unset when --board is whitelisted,
-        but otherwise have the same value as the parent environment. It
-        is up to the user to set this value appropriately.'''
-        # There's no whitelisting for 'arguments' which can't be overridden.
-        self.arguments.zephyr_base = find_zephyr_base()
-        # self.arguments.zephyr_sdk_install_dir = find_zephyr_sdk()
-
+        If '--outputs' was whitelisted, it is assumed this command is
+        invoking make, and the instance variable 'make_envs' will be set
+        upon return.  It will contain the keys 'app' and 'mcuboot' as
+        appropriate, and values equal to the build environments to use
+        for those outputs.  These environments have BOARD unset when
+        --board is whitelisted, but otherwise have the same value as the
+        parent environment.'''
         base_env = dict(os.environ)
 
         if '--board' in self.whitelist:
@@ -515,23 +536,27 @@ class Command(abc.ABC):
             else:
                 self.arguments.outputs = [self.arguments.outputs]
 
+            # Set up overridden variables.
+            self.make_overrides = { 'zephyr_base': find_zephyr_base() }
+            if self.arguments.prebuilt_toolchain.startswith('y'):
+                self._prep_use_prebuilt()
+            for arg in BUILD_OPTIONS:
+                val = getattr(self.arguments, arg)
+                self.make_overrides[arg] = val
+
+            # Create the application and mcuboot build environments,
+            # warning when environment variables are overridden.
             app_build_env = dict(base_env)
-            forced_settings = {arg: getattr(self.arguments, arg) for arg in
-                               itertools.chain(BUILD_OPTIONS, BUILD_OVERRIDES)}
-            for arg, val in forced_settings.items():
+            for arg, val in self.make_overrides.items():
                 env_var = self.arg_to_env_var(arg)
                 self._wrn_if_overridden(base_env, env_var, val)
                 app_build_env[env_var] = val
-
             mcuboot_build_env = dict(app_build_env)
             del mcuboot_build_env['CONF_FILE']
 
             envs = {'app': app_build_env, 'mcuboot': mcuboot_build_env}
-
-            return {k: v for k, v in envs.items()
-                    if k in self.arguments.outputs}
-        else:
-            return {}
+            self.make_envs = {k: v for k, v in envs.items()
+                              if k in self.arguments.outputs}
 
     #
     # Miscellaneous
@@ -614,7 +639,7 @@ class Build(Command):
         if not self.version_is_semver(self.arguments.imgtool_version):
             raise ValueError('{} is not in semantic versioning format'.format(
                 self.arguments.imgtool_version))
-        self.build_envs = super(Build, self).prep_for_run()
+        super(Build, self).prep_for_run()
 
     def invoke(self, build_args):
         self.arguments = build_args
@@ -642,15 +667,15 @@ class Build(Command):
                      '-j', str(self.arguments.jobs),
                      'O={}'.format(shlex.quote(outdir))]
         cmd_exports = cmd_build + ['outputexports']
-        build_env = dict(self.build_envs[output])
+        build_env = dict(self.make_envs[output])
         build_env['BOARD'] = board
 
         try:
             self.dbg_make_cmd('Building {} image'.format(output),
-                              cmd_build, board=board)
+                              cmd_build, env=build_env, board=board)
             subprocess.check_call(cmd_build, env=build_env)
             self.dbg_make_cmd('Generating outputexports',
-                              cmd_exports, board=board)
+                              cmd_exports, env=build_env, board=board)
             subprocess.check_call(cmd_exports, env=build_env)
             # Note: generating the signing command requires some Zephyr
             # build outputs.
@@ -722,7 +747,7 @@ class Configure(Command):
             help='''Configure front-end (default: {})'''.format(default))
 
     def prep_for_run(self):
-        self.configure_envs = super(Configure, self).prep_for_run()
+        super(Configure, self).prep_for_run()
 
     def invoke(self, configure_args):
         self.arguments = configure_args
@@ -743,12 +768,12 @@ class Configure(Command):
                          '-j', str(self.arguments.jobs),
                          'O={}'.format(shlex.quote(outdir)),
                          self.arguments.configurator]
-        configure_env = dict(self.configure_envs[output])
+        configure_env = dict(self.make_envs[output])
         configure_env['BOARD'] = board
 
         try:
             self.dbg_make_cmd('Configuring {} for {}'.format(output, app),
-                              cmd_configure, board=board)
+                              cmd_configure, env=configure_env, board=board)
             subprocess.check_call(cmd_configure, env=configure_env)
         except subprocess.CalledProcessError as e:
             if not self.arguments.keep_going:
@@ -866,6 +891,8 @@ class BuildDoc(Command):
                              'OUTDIR={}'.format(shlex.quote(build_base)),
                              shlex.quote(output)]
             msg = 'Building documentation in {} format'.format(output)
+            # This make invocation isn't for Zephyr, so its build environment
+            # and the BOARD setting aren't important for debugging.
             self.dbg_make_cmd(msg, cmd_build_doc)
             subprocess.check_call(cmd_build_doc)
 
