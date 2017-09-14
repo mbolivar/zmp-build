@@ -638,7 +638,7 @@ class Build(Command):
                             help="""If set, don't sign the resulting binary
                                  for loading by mcuboot. Use of this option
                                  implies -o app, and is incompatible with
-                                 the -K and -t options.""")
+                                 the -K option.""")
 
     def do_prep_for_run(self, environment):
         self.insecure_requested = False
