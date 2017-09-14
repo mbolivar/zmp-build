@@ -380,7 +380,7 @@ class Command(abc.ABC):
             self.whitelist = whitelist
 
     #
-    # Abstract interfaces.
+    # Abstract interfaces and overridable behavior.
     #
 
     @abc.abstractproperty
@@ -391,12 +391,29 @@ class Command(abc.ABC):
     def command_help(self):
         '''The top-level help string for this command to display to users.'''
 
-    @abc.abstractmethod
-    def invoke(self, arguments):
-        '''Invoke the command with the given arguments.
+    def do_register(self, parser):
+        '''Subclasses may override to register a register() callback.'''
+        pass
 
-        The subclass may not call superclass methods until it has set
-        self.arguments to the given arguments value.'''
+    def do_prep_for_run(self, environment):
+        '''Subclasses may override to register a prep_for_run() callback.
+
+        When this method is invoked, self.arguments contains the
+        command's arguments.
+
+        The argument `environment' is a mutable dict-like that will be
+        used as a starting point for self.make_envs, if that is created
+        in the prep_for_run() call. Subclasses can modify it as needed,
+        though note that the values it contains may be overridden by the
+        Command core.'''
+        pass
+
+    @abc.abstractmethod
+    def do_invoke(self):
+        '''Handle command-specific invocation work.
+
+        When this method is called, self.arguments contains the command
+        arguments, and self.prep_for_run() has been called.'''
 
     #
     # Printing helpers for use here and by subclasses. Rules:
@@ -433,15 +450,12 @@ class Command(abc.ABC):
     #
 
     def register(self, parsers):
+        '''Register a command with a parser, adding arguments.
+
+        Any whitelist passed at instantiation time will be used as a
+        filter on arguments to add.'''
         parser = parsers.add_parser(self.command_name, help=self.command_help)
-        self.add_arguments(parser)
 
-    def add_arguments(self, parser):
-        '''Add common arguments.
-
-        Subclasses may override, but must call the superclass
-        method. Any whitelist passed at instantiation time will be used
-        by the super method as a filter on arguments to add.'''
         # These are generally useful for commands that operate on build
         # artifacts.
         if '--board' in self.whitelist:
@@ -489,6 +503,8 @@ class Command(abc.ABC):
                            not any(x in self.whitelist for x in toolchain_wl))
         assert toolchain_wl_ok, 'internal error: bad toolchain whitelist'
 
+        self.do_register(parser)
+
     def help(self, argument):
         '''Get help text for a given argument. Subclasses may override.'''
         if argument not in Command.HELP:
@@ -508,9 +524,9 @@ class Command(abc.ABC):
     def prep_for_run(self):
         '''Finish setting up arguments and prepare run environments.
 
-        Subclasses can use this to clean up the representation of some
-        arguments, add values for 'arguments' that don't have options
-        yet, and retrieve build environments to run commands in.
+        Clean up the representation of some arguments, add values for
+        'pseudo-arguments' that don't have options yet, and retrieve build
+        environments to run commands in.
 
         If '--outputs' was whitelisted, it is assumed this command is
         invoking make, and the instance variable 'make_envs' will be set
@@ -520,6 +536,7 @@ class Command(abc.ABC):
         --board is whitelisted, but otherwise have the same value as the
         parent environment.'''
         base_env = dict(os.environ)
+        self.do_prep_for_run(base_env)
 
         if '--board' in self.whitelist:
             if len(self.arguments.boards) == 0:
@@ -557,6 +574,12 @@ class Command(abc.ABC):
             envs = {'app': app_build_env, 'mcuboot': mcuboot_build_env}
             self.make_envs = {k: v for k, v in envs.items()
                               if k in self.arguments.outputs}
+
+    def invoke(self, arguments):
+        '''Invoke the command, with given arguments.'''
+        self.arguments = arguments
+        self.prep_for_run()
+        self.do_invoke()
 
     #
     # Miscellaneous
@@ -599,8 +622,7 @@ class Build(Command):
         }
         return overrides.get(argument, super(Build, self).help(argument))
 
-    def add_arguments(self, parser):
-        super(Build, self).add_arguments(parser)
+    def do_register(self, parser):
         parser.add_argument('-K', '--signing-key',
                             help='''Path to signing key for application
                                  binary. WARNING: if not given, an INSECURE
@@ -617,7 +639,7 @@ class Build(Command):
                                  implies -o app, and is incompatible with
                                  the -K and -t options.""")
 
-    def prep_for_run(self):
+    def do_prep_for_run(self, environment):
         self.insecure_requested = False
         if self.arguments.skip_signature:
             if self.arguments.signing_key is not None:
@@ -639,11 +661,8 @@ class Build(Command):
         if not self.version_is_semver(self.arguments.imgtool_version):
             raise ValueError('{} is not in semantic versioning format'.format(
                 self.arguments.imgtool_version))
-        super(Build, self).prep_for_run()
 
-    def invoke(self, build_args):
-        self.arguments = build_args
-        self.prep_for_run()
+    def do_invoke(self):
         mcuboot = find_mcuboot_root()
 
         # Run the builds.
@@ -737,8 +756,7 @@ class Configure(Command):
                are given, the configurators are run in the order the apps
                are specified.'''
 
-    def add_arguments(self, parser):
-        super(Configure, self).add_arguments(parser)
+    def do_register(self, parser):
         default = CONFIGURATOR_DEFAULT
         parser.add_argument(
             '-C', '--configurator',
@@ -746,18 +764,13 @@ class Configure(Command):
             default=default,
             help='''Configure front-end (default: {})'''.format(default))
 
-    def prep_for_run(self):
-        super(Configure, self).prep_for_run()
-
-    def invoke(self, configure_args):
-        self.arguments = configure_args
-        self.prep_for_run()
+    def do_invoke(self):
         mcuboot = find_mcuboot_root()
 
         for board in self.arguments.boards:
-            for app in configure_args.app:
+            for app in self.arguments.app:
                 makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
-                for output in configure_args.outputs:
+                for output in self.arguments.outputs:
                     self.do_configure(board, app, output,
                                       makefile_dirs[output])
 
@@ -799,8 +812,7 @@ class Flash(Command):
     def command_help(self):
         return 'Flash a bootloader and a signed application image to a board.'
 
-    def add_arguments(self, parser):
-        super(Flash, self).add_arguments(parser)
+    def do_register(self, parser):
         parser.add_argument('-d', '--device-id', dest='device_ids',
                             default=[], action='append',
                             help='''Device identifier given to the flashing
@@ -811,7 +823,7 @@ class Flash(Command):
                             help='''Extra arguments to pass to the
                                  flashing tool''')
 
-    def prep_for_run(self):
+    def do_prep_for_run(self, environment):
         if len(self.arguments.app) > 1:
             raise ValueError('only one application may be flashed at a time.')
         if self.arguments.device_ids and len(self.arguments.boards) > 1:
@@ -820,12 +832,8 @@ class Flash(Command):
 
         self.arguments.app = self.arguments.app[0].rstrip(os.path.sep)
         self.arguments.extra = self.arguments.extra.split()
-        super(Flash, self).prep_for_run()
 
-    def invoke(self, flash_args):
-        self.arguments = flash_args
-        self.prep_for_run()
-
+    def do_invoke(self):
         if self.arguments.device_ids:
             for device_id in self.arguments.device_ids:
                 flasher = ZephyrBinaryFlasher.create_flasher(
@@ -858,8 +866,7 @@ class BuildDoc(Command):
     def command_help(self):
         return '''Convert documentation to its output format.'''
 
-    def add_arguments(self, parser):
-        super(BuildDoc, self).add_arguments(parser)
+    def do_register(self, parser):
         # Note -o / --outputs has a different meaning than usual. It's close
         # enough that we want people to think of it as the same idea.
         parser.add_argument(
@@ -870,17 +877,13 @@ class BuildDoc(Command):
                   documentation in (default: {})'''.format(
                       DOC_FORMAT_DEFAULT))
 
-    def prep_for_run(self):
+    def do_prep_for_run(self, environment):
         if self.arguments.outputs == 'all':
             self.arguments.outputs = DOC_OUTPUT_FORMATS
         else:
             self.arguments.outputs = [self.arguments.outputs]
-        super(BuildDoc, self).prep_for_run()
 
-    def invoke(self, build_doc_args):
-        self.arguments = build_doc_args
-        self.prep_for_run()
-
+    def do_invoke(self):
         # Default build_base is outdir/doc/; sphinx builders will generate
         # subdirectories for each output, e.g. outdir/doc/{html,dirhtml}.
         build_base = os.path.join(self.arguments.outdir, DOC_PATH)
