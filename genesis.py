@@ -391,6 +391,16 @@ class Command(abc.ABC):
     def command_help(self):
         '''The top-level help string for this command to display to users.'''
 
+    def arg_help(self, argument):
+        '''Get help text for an argument provided by an abstract Command.
+
+        Subclasses may override this to provide specialized help text.'''
+        if argument not in Command.HELP:
+            msg = ('internal error: no help available for unknown argument' +
+                   '{}'.format(argument))
+            raise ValueError(msg)
+        return Command.HELP[argument]
+
     def do_register(self, parser):
         '''Subclasses may override to register a register() callback.'''
         pass
@@ -461,38 +471,38 @@ class Command(abc.ABC):
         if '--board' in self.whitelist:
             parser.add_argument('-b', '--board', dest='boards',
                                 default=[], action='append',
-                                help=self.help('--board'))
+                                help=self.arg_help('--board'))
         if '--outdir' in self.whitelist:
             parser.add_argument('-O', '--outdir',
                                 default=find_default_outdir(),
-                                help=self.help('--outdir'))
+                                help=self.arg_help('--outdir'))
         if 'app' in self.whitelist:
-            parser.add_argument('app', nargs='+', help=self.help('app'))
+            parser.add_argument('app', nargs='+', help=self.arg_help('app'))
 
         # These are needed by commands that invoke 'make', like 'build' and
         # 'configure'.
         if '--zephyr-gcc-variant' in self.whitelist:
             parser.add_argument('-z', '--zephyr-gcc-variant',
                                 default=ZEPHYR_GCC_VARIANT_DEFAULT,
-                                help=self.help('--zephyr-gcc-variant'))
+                                help=self.arg_help('--zephyr-gcc-variant'))
         if '--prebuilt-toolchain' in self.whitelist:
             parser.add_argument('--prebuilt-toolchain', default='yes',
                                 choices=['yes', 'no', 'y', 'n'],
-                                help=self.help('--prebuilt-toolchain'))
+                                help=self.arg_help('--prebuilt-toolchain'))
         if '--conf-file' in self.whitelist:
             parser.add_argument('-c', '--conf-file', default=CONF_FILE_DEFAULT,
-                                help=self.help('--conf-file'))
+                                help=self.arg_help('--conf-file'))
         if '--jobs' in self.whitelist:
             parser.add_argument('-j', '--jobs',
                                 type=int, default=BUILD_PARALLEL_DEFAULT,
-                                help=self.help('--jobs'))
+                                help=self.arg_help('--jobs'))
         if '--keep-going' in self.whitelist:
             parser.add_argument('-k', '--keep-going', action='store_true',
-                                help=self.help('--keep-going'))
+                                help=self.arg_help('--keep-going'))
         if '--outputs' in self.whitelist:
             parser.add_argument('-o', '--outputs',
                                 choices=BUILD_OUTPUTS + ['all'], default='all',
-                                help=self.help('--outputs'))
+                                help=self.arg_help('--outputs'))
 
         # The following toolchain-related arguments must all be in the
         # whitelist, if any of them are.
@@ -504,14 +514,6 @@ class Command(abc.ABC):
         assert toolchain_wl_ok, 'internal error: bad toolchain whitelist'
 
         self.do_register(parser)
-
-    def help(self, argument):
-        '''Get help text for a given argument. Subclasses may override.'''
-        if argument not in Command.HELP:
-            msg = ('internal error: no help available for unknown argument' +
-                   '{}'.format(argument))
-            raise ValueError(msg)
-        return Command.HELP[argument]
 
     def _prep_use_prebuilt(self):
         if self.arguments.zephyr_gcc_variant == 'gccarmemb':
@@ -616,11 +618,10 @@ class Build(Command):
     def command_help(self):
         return 'Build Genesis application images'
 
-    def help(self, argument):
-        overrides = {
-            '--outputs': 'Which outputs to build (default: all)'
-        }
-        return overrides.get(argument, super(Build, self).help(argument))
+    def arg_help(self, argument):
+        if argument == '--outputs':
+            return 'Which outputs to build (default: all)'
+        return super(Build, self).arg_help(argument)
 
     def do_register(self, parser):
         parser.add_argument('-K', '--signing-key',
