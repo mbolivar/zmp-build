@@ -537,7 +537,7 @@ class Command(abc.ABC):
                 self.arguments.outputs = [self.arguments.outputs]
 
             # Set up overridden variables.
-            self.make_overrides = { 'zephyr_base': find_zephyr_base() }
+            self.make_overrides = {'zephyr_base': find_zephyr_base()}
             if self.arguments.prebuilt_toolchain.startswith('y'):
                 self._prep_use_prebuilt()
             for arg in BUILD_OPTIONS:
