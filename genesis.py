@@ -21,7 +21,7 @@ ARGV = sys.argv[1:]
 
 # We could be smarter about this (search for .repo, e.g.), but it seems
 # unnecessary.
-GENESIS_ROOT = os.path.abspath(os.path.dirname(__file__))
+GENESIS_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = '96b_nitrogen'
