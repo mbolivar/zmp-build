@@ -935,6 +935,7 @@ def main():
             print('Error: {}'.format(e), file=sys.stderr)
             print('Re-run as {} for a stack trace.'.format(re_run),
                   file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
