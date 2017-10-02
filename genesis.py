@@ -107,9 +107,9 @@ def find_arm_none_eabi_gcc():
         }
     subdir = platform_subdirectories[platform.system()]
     return os.path.join(find_genesis_root(),
-                        'sdk-build',
+                        'build',
                         'other',
-                        'genesis-sdk-prebuilt',
+                        'zmp-prebuilt',
                         'arm-none-eabi-gcc',
                         subdir)
 
