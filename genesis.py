@@ -213,7 +213,7 @@ class ZephyrBinaryFlasher(abc.ABC):
         boards as a FLASH_SCRIPT in the Zephyr build system.'''
 
     @abc.abstractmethod
-    def get_flash_commands(self, device_id, exports, mcuboot_quoted,
+    def get_flash_commands(self, device_id, exports, parent, mcuboot_quoted,
                            app_quoted, app_offset, extra_quoted):
         '''Get dictionary of commands needed to perform a flash.
 
@@ -222,23 +222,30 @@ class ZephyrBinaryFlasher(abc.ABC):
         Values should be iterables of commands. Each command is a
         list, suitable for passing to subprocess.check_call().'''
 
-    def _get_flash_common(self, extra_args):
+    def _get_flash_common(self, extra_args, relative=False):
         app_outdir = find_app_outdir(self.outdir, self.app, self.board, 'app')
         # It's fine to use the app's exports to flash mcuboot as well.
         exports = ZephyrExports(app_outdir)
         app_offset = hex(int(exports.get('FLASH_AREA_IMAGE_0_OFFSET'), base=0))
         app_bin = '{}-{}-signed.bin'.format(os.path.basename(self.app),
                                             self.board)
-        app_quoted = shlex.quote(os.path.join(app_outdir, app_bin))
-
         mcuboot_outdir = find_app_outdir(self.outdir, self.app, self.board,
                                          'mcuboot')
-        mcuboot_quoted = shlex.quote(os.path.join(mcuboot_outdir,
-                                                  'zephyr.bin'))
+        mcuboot_bin = 'zephyr.bin'
+
+        parent = os.path.commonprefix([app_outdir, mcuboot_outdir])
+
+        if relative:
+            app_outdir = app_outdir[len(parent):]
+            mcuboot_outdir = mcuboot_outdir[len(parent):]
+
+        app_quoted = shlex.quote(os.path.join(app_outdir, app_bin))
+        mcuboot_quoted = shlex.quote(os.path.join(mcuboot_outdir, mcuboot_bin))
 
         extra_quoted = [shlex.quote(e) for e in extra_args]
 
-        return (exports, mcuboot_quoted, app_quoted, app_offset, extra_quoted)
+        return (exports, parent, mcuboot_quoted, app_quoted, app_offset,
+                extra_quoted)
 
     def flash(self, device_id, extra_args):
         '''Flash the board, taking a list of extra arguments to pass on to
@@ -262,10 +269,44 @@ class ZephyrBinaryFlasher(abc.ABC):
         for cmd in app_cmds:
             subprocess.check_call(cmd)
 
+    def quote_sh_list(self, cmd):
+        '''Transform a command from list into shell string form.'''
+        fmt = ' '.join('{}' for _ in cmd)
+        args = [shlex.quote(s) for s in cmd]
+        return fmt.format(*args)
+
+    def generate_script(self, fmt):
+        '''Generate a script in the given format to flash the board.
+
+        Currently, only shell script is supported.'''
+        if fmt != 'sh':
+            raise NotImplementedError('fmt must be sh')
+        common = self._get_flash_common([], relative=True)
+        cmds = self.get_flash_commands(None, *common)
+        parent = common[1]
+        path = os.path.join(parent, 'flash.sh')
+
+        # Generate the script.
+        with open(path, 'w') as f:
+            mcuboot_cmds = cmds['mcuboot']
+            app_cmds = cmds['app']
+
+            print('#!/bin/sh', file=f)
+            print(file=f)
+            print('# Flash mcuboot:', file=f)
+            for cmd in mcuboot_cmds:
+                print(self.quote_sh_list(cmd), file=f)
+            print('# Flash signed application:', file=f)
+            for cmd in app_cmds:
+                print(self.quote_sh_list(cmd), file=f)
+
+        # Make the script executable for user and group.
+        os.chmod(path, os.stat(path).st_mode | 0o110)
+
 
 class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
 
-    def get_flash_commands(self, device_id, exports, mcuboot_quoted,
+    def get_flash_commands(self, device_id, exports, parent, mcuboot_quoted,
                            app_quoted, app_offset, extra_quoted):
         # TODO: support non-DfuSe devices. As-is, we support STM32 extensions
         # to the DFU protocol only.
@@ -305,7 +346,7 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
     # Invoking pyocd-flashtool again quickly results in errors on some systems.
     SLEEP_INTERVAL_SEC = '1'
 
-    def get_flash_commands(self, device_id, exports, mcuboot_quoted,
+    def get_flash_commands(self, device_id, exports, parent, mcuboot_quoted,
                            app_quoted, app_offset, extra_quoted):
         target_quoted = shlex.quote(exports.get('PYOCD_TARGET'))
         board_id = []
@@ -678,9 +719,19 @@ class Build(Command):
         # Run the builds.
         for board in self.arguments.boards:
             for app in self.arguments.app:
+                app = app.rstrip(os.path.sep)
                 makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
                 for output in self.arguments.outputs:
                     self.do_build(board, app, output, makefile_dirs[output])
+
+                # Only generate a flashing script if we've built both outputs.
+                if self.arguments.outputs != ['app', 'mcuboot']:
+                    continue
+                outdir = self.arguments.outdir
+                debug = self.arguments.debug
+                flasher = ZephyrBinaryFlasher.create_flasher(board, app,
+                                                             outdir, debug)
+                flasher.generate_script('sh')
 
     def do_build(self, board, app, output, makefile_dir):
         signing_app = (output == 'app' and not self.arguments.skip_signature)
@@ -725,8 +776,8 @@ class Build(Command):
         vtoff = exports.get_ensure_hex('CONFIG_TEXT_SECTION_OFFSET')
         pad = exports.get_ensure_hex('FLASH_AREA_IMAGE_0_SIZE')
         unsigned_bin = os.path.join(outdir, 'zephyr.bin')
-        app_clean = os.path.basename(app.rstrip(os.path.sep))
-        app_bin_name = '{}-{}-signed.bin'.format(app_clean, board)
+        app_base = os.path.basename(app)
+        app_bin_name = '{}-{}-signed.bin'.format(app_base, board)
         signed_bin = os.path.join(outdir, app_bin_name)
         version = self.arguments.imgtool_version
         return ['/usr/bin/env', 'python3',
