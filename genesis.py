@@ -10,7 +10,6 @@ import re
 import shlex
 import subprocess
 import sys
-import time
 
 #
 # Globals
@@ -214,9 +213,14 @@ class ZephyrBinaryFlasher(abc.ABC):
         boards as a FLASH_SCRIPT in the Zephyr build system.'''
 
     @abc.abstractmethod
-    def do_flash(self, device_id, exports, mcuboot_quoted, app_quoted,
-                 app_offset, extra_quoted):
-        '''Low-level flash routine.'''
+    def get_flash_commands(self, device_id, exports, mcuboot_quoted,
+                           app_quoted, app_offset, extra_quoted):
+        '''Get dictionary of commands needed to perform a flash.
+
+        Keys should be 'mcuboot' and 'app'.
+
+        Values should be iterables of commands. Each command is a
+        list, suitable for passing to subprocess.check_call().'''
 
     def _get_flash_common(self, extra_args):
         app_outdir = find_app_outdir(self.outdir, self.app, self.board, 'app')
@@ -239,13 +243,30 @@ class ZephyrBinaryFlasher(abc.ABC):
     def flash(self, device_id, extra_args):
         '''Flash the board, taking a list of extra arguments to pass on to
         the underlying flashing tool.'''
-        self.do_flash(device_id, *self._get_flash_common(extra_args))
+        common = self._get_flash_common(extra_args)
+        cmds = self.get_flash_commands(device_id, *common)
+        mcuboot_cmds = cmds['mcuboot']
+        app_cmds = cmds['app']
+
+        if self.debug_print:
+            print('Flashing mcuboot:')
+            for cmd in mcuboot_cmds:
+                print('\t{}'.format(' '.join(cmd)))
+        for cmd in mcuboot_cmds:
+            subprocess.check_call(cmd)
+
+        if self.debug_print:
+            print('Flashing signed application:')
+            for cmd in app_cmds:
+                print('\t{}'.format(' '.join(cmd)))
+        for cmd in app_cmds:
+            subprocess.check_call(cmd)
 
 
 class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
 
-    def do_flash(self, device_id, exports, mcuboot_quoted, app_quoted,
-                 app_offset, extra_quoted):
+    def get_flash_commands(self, device_id, exports, mcuboot_quoted,
+                           app_quoted, app_offset, extra_quoted):
         # TODO: support non-DfuSe devices. As-is, we support STM32 extensions
         # to the DFU protocol only.
         #
@@ -265,10 +286,6 @@ class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
                               '-s', '{}:force:mass-erase'.format(flash_base),
                               '-D', mcuboot_quoted] +
                              serial)
-        if self.debug_print:
-            print('Flashing mcuboot:')
-            print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
-        subprocess.check_call(cmd_flash_mcuboot)
 
         cmd_flash_app = (['dfu-util',
                           '-d', pid_arg_quoted,
@@ -276,10 +293,8 @@ class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
                           '-s', '{}:leave'.format(app_base),
                           '-D', app_quoted] +
                          serial)
-        if self.debug_print:
-            print('Flashing signed application:')
-            print('\t{}'.format(' '.join(cmd_flash_app)))
-        subprocess.check_call(cmd_flash_app)
+
+        return {'mcuboot': [cmd_flash_mcuboot], 'app': [cmd_flash_app]}
 
     def is_equivalent_to(script):
         return script == 'dfuutil.sh'
@@ -288,10 +303,10 @@ class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
 class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
 
     # Invoking pyocd-flashtool again quickly results in errors on some systems.
-    SLEEP_INTERVAL_SEC = 0.75
+    SLEEP_INTERVAL_SEC = '1'
 
-    def do_flash(self, device_id, exports, mcuboot_quoted, app_quoted,
-                 app_offset, extra_quoted):
+    def get_flash_commands(self, device_id, exports, mcuboot_quoted,
+                           app_quoted, app_offset, extra_quoted):
         target_quoted = shlex.quote(exports.get('PYOCD_TARGET'))
         board_id = []
         if device_id:
@@ -304,12 +319,7 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
                              board_id +
                              extra_quoted +
                              [mcuboot_quoted])
-        if self.debug_print:
-            print('Flashing mcuboot:')
-            print('\t{}'.format(' '.join(cmd_flash_mcuboot)))
-        subprocess.check_call(cmd_flash_mcuboot)
-
-        time.sleep(PyOcdBinaryFlasher.SLEEP_INTERVAL_SEC)
+        cmd_sleep_mcuboot = ['sleep', PyOcdBinaryFlasher.SLEEP_INTERVAL_SEC]
 
         cmd_flash_app = (['pyocd-flashtool',
                           '-t', target_quoted,
@@ -317,10 +327,9 @@ class PyOcdBinaryFlasher(ZephyrBinaryFlasher):
                          board_id +
                          extra_quoted +
                          [app_quoted])
-        if self.debug_print:
-            print('Flashing signed application:')
-            print('\t{}'.format(' '.join(cmd_flash_app)))
-        subprocess.check_call(cmd_flash_app)
+
+        return {'mcuboot': [cmd_flash_mcuboot, cmd_sleep_mcuboot],
+                'app': [cmd_flash_app]}
 
     def is_equivalent_to(script):
         return script == 'pyocd.sh'
