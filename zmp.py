@@ -913,58 +913,6 @@ class Flash(Command):
                     self.arguments.debug)
                 flasher.flash(None, self.arguments.extra)
 
-#
-# Build documentation
-#
-
-
-class BuildDoc(Command):
-
-    def __init__(self, *args, **kwargs):
-        kwargs['whitelist'] = {'--outdir', '--jobs', '--keep-going'}
-        super(BuildDoc, self).__init__(*args, **kwargs)
-
-    @property
-    def command_name(self):
-        return 'build-doc'
-
-    @property
-    def command_help(self):
-        return '''Convert documentation to its output format.'''
-
-    def do_register(self, parser):
-        # Note -o / --outputs has a different meaning than usual. It's close
-        # enough that we want people to think of it as the same idea.
-        parser.add_argument(
-            '-o', '--outputs',
-            choices=DOC_OUTPUT_FORMATS + ['all'],
-            default=DOC_FORMAT_DEFAULT,
-            help='''What format to generate the
-                  documentation in (default: {})'''.format(
-                      DOC_FORMAT_DEFAULT))
-
-    def do_prep_for_run(self, environment):
-        if self.arguments.outputs == 'all':
-            self.arguments.outputs = DOC_OUTPUT_FORMATS
-        else:
-            self.arguments.outputs = [self.arguments.outputs]
-
-    def do_invoke(self):
-        # Default build_base is outdir/doc/; sphinx builders will generate
-        # subdirectories for each output, e.g. outdir/doc/{html,dirhtml}.
-        build_base = os.path.join(self.arguments.outdir, DOC_PATH)
-        for output in self.arguments.outputs:
-            cmd_build_doc = ['make',
-                             '-C', shlex.quote(find_doc_root()),
-                             '-j', str(self.arguments.jobs),
-                             'OUTDIR={}'.format(shlex.quote(build_base)),
-                             shlex.quote(output)]
-            msg = 'Building documentation in {} format'.format(output)
-            # This make invocation isn't for Zephyr, so its build environment
-            # and the BOARD setting aren't important for debugging.
-            self.dbg_make_cmd(msg, cmd_build_doc)
-            subprocess.check_call(cmd_build_doc)
-
 
 #
 # main()
