@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 
+# Copyright (c) 2017 Linaro Limited.
+# Copyright (c) 2017 Open Source Foundries Limited.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import abc
 import argparse
 import multiprocessing
@@ -20,7 +25,7 @@ ARGV = sys.argv[1:]
 
 # We could be smarter about this (search for .repo, e.g.), but it seems
 # unnecessary.
-GENESIS_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+ZMP_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = '96b_nitrogen'
@@ -28,7 +33,7 @@ ZEPHYR_GCC_VARIANT_DEFAULT = 'gccarmemb'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 
-# Checked out paths for important repositories relative to Genesis root.
+# Checked out paths for important repositories relative to ZMP root.
 # TODO: parse these from the repo manifest, for robustness, at some point.
 ZEPHYR_PATH = 'zephyr'
 ZEPHYR_SDK_PATH = os.path.join('sdk-prebuilts', 'zephyr-sdk')
@@ -41,8 +46,8 @@ BUILD_OPTIONS = ['conf_file',
                  # 'board',
                  ]
 # What types of build outputs to produce.
-# - app: Genesis application, which can be signed for flashing or FOTA update.
-# - mcuboot: Genesis bootloader, not signed and must be flashed.
+# - app: ZMP-ready application, which can be signed for flashing or FOTA.
+# - mcuboot: ZMP bootloader, not signed and must be flashed.
 BUILD_OUTPUTS = ['app', 'mcuboot']
 # The name of the directory which is the default root of the build hierarchy,
 # relative to the .repo root.
@@ -88,24 +93,24 @@ DOC_FORMAT_DEFAULT = 'html'
 #
 
 
-def find_genesis_root():
-    '''Get absolute path of root directory of this Genesis installation.'''
-    return GENESIS_ROOT
+def find_zmp_root():
+    '''Get absolute path of root directory of this ZMP installation.'''
+    return ZMP_ROOT
 
 
 def find_zephyr_base():
-    '''Get absolute path of Genesis Zephyr base directory.'''
-    return os.path.join(find_genesis_root(), ZEPHYR_PATH)
+    '''Get absolute path of ZMP Zephyr base directory.'''
+    return os.path.join(find_zmp_root(), ZEPHYR_PATH)
 
 
 def find_arm_none_eabi_gcc():
-    '''Get absolute path of Genesis prebuilt GCC ARM Embedded.'''
+    '''Get absolute path of ZMP prebuilt GCC ARM Embedded.'''
     platform_subdirectories = {
         'Linux': 'linux',
         'Darwin': 'mac',
         }
     subdir = platform_subdirectories[platform.system()]
-    return os.path.join(find_genesis_root(),
+    return os.path.join(find_zmp_root(),
                         'build',
                         'other',
                         'zmp-prebuilt',
@@ -114,13 +119,13 @@ def find_arm_none_eabi_gcc():
 
 
 def find_app_root(app_name):
-    '''Get absolute path of app within Genesis Zephyr SDK.'''
-    return os.path.join(find_genesis_root(), app_name)
+    '''Get absolute path of app within ZMP Zephyr SDK.'''
+    return os.path.join(find_zmp_root(), app_name)
 
 
 def find_mcuboot_root():
     '''Get absolute path of mcuboot repository.'''
-    return os.path.join(find_genesis_root(), MCUBOOT_PATH)
+    return os.path.join(find_zmp_root(), MCUBOOT_PATH)
 
 
 def find_sdk_build_root():
@@ -130,12 +135,12 @@ def find_sdk_build_root():
 
 def find_doc_root():
     '''Get absolute path of documentation source code repository.'''
-    return os.path.join(find_genesis_root(), DOC_PATH)
+    return os.path.join(find_zmp_root(), DOC_PATH)
 
 
 def find_default_outdir():
     '''Get absolute path of default output directory.'''
-    return os.path.join(find_genesis_root(), BUILD_DIR_DEFAULT)
+    return os.path.join(find_zmp_root(), BUILD_DIR_DEFAULT)
 
 
 def find_app_outdir(outdir, app, board, output):
@@ -389,15 +394,15 @@ class Command(abc.ABC):
         '--board': '''Zephyr board to target (default: {}). This may be
                    given multiple times to target additional boards.'''.format(
                        BOARD_DEFAULT),
-        '--outdir': '''Build directory (default: '{}' under Genesis
+        '--outdir': '''Build directory (default: '{}' under ZMP
                     root).'''.format(BUILD_DIR_DEFAULT),
-        'app': 'Genesis application(s) sources',
+        'app': 'application(s) sources',
 
         # Needed to build, configure, etc. Zephyr.
         '--zephyr-gcc-variant': '''Toolchain variant used by Zephyr
                        (default: {})'''.format(ZEPHYR_GCC_VARIANT_DEFAULT),
         '--prebuilt-toolchain': '''Whether to use a pre-built toolchain
-                       provided with Genesis, if one exists (default: 'yes').
+                       provided with ZMP, if one exists (default: 'yes').
                        Currently, only a pre-built GCC ARM Embedded toolchain
                        is provided. Set to 'no' to prevent overriding the
                        toolchain's location in the calling environment.''',
@@ -666,7 +671,7 @@ class Build(Command):
 
     @property
     def command_help(self):
-        return 'Build Genesis application images'
+        return 'Build application images'
 
     def arg_help(self, argument):
         if argument == '--outputs':
@@ -813,7 +818,7 @@ class Configure(Command):
 
     @property
     def command_help(self):
-        return '''Configure Genesis application images. If multiple apps
+        return '''Configure application images. If multiple apps
                are given, the configurators are run in the order the apps
                are specified.'''
 
