@@ -61,15 +61,6 @@ MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'
 MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
-# mcuboot-related SoC-specific state.
-# TODO: get these values from ZephyrExports when they're available there.
-MCUBOOT_WORD_SIZES = {
-    '96b_nitrogen': '4',
-    '96b_carbon': '1',
-    'frdm_k64f': '8',
-    'nrf52840_pca10056': '4',
-    'nrf52_blenano2': '4',
-}
 
 # Programs which 'configure' can use to generate Zephyr .config files.
 CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
@@ -702,10 +693,6 @@ class Build(Command):
                 raise ValueError('{} is incompatible with {}'.format(
                     '--skip-signature', '--signing-key'))
             self.arguments.outputs = 'app'
-        else:
-            for b in self.arguments.boards:
-                if b not in MCUBOOT_WORD_SIZES:
-                    raise ValueError("{}: unknown flash word size".format(b))
         if self.arguments.signing_key is None:
             self.arguments.signing_key = os.path.join(find_mcuboot_root(),
                                                       MCUBOOT_DEV_KEY)
@@ -778,6 +765,7 @@ class Build(Command):
 
     def sign_command(self, board, app, outdir):
         exports = ZephyrExports(outdir)
+        align = exports.get_ensure_int('FLASH_WRITE_BLOCK_SIZE')
         vtoff = exports.get_ensure_hex('CONFIG_TEXT_SECTION_OFFSET')
         pad = exports.get_ensure_hex('FLASH_AREA_IMAGE_0_SIZE')
         unsigned_bin = os.path.join(outdir, 'zephyr.bin')
@@ -789,7 +777,7 @@ class Build(Command):
                 os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
                 'sign',
                 '--key', shlex.quote(self.arguments.signing_key),
-                '--align', MCUBOOT_WORD_SIZES[board],
+                '--align', align,
                 '--header-size', vtoff,
                 '--included-header',
                 '--pad', pad,
