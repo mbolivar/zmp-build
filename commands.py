@@ -135,7 +135,7 @@ class Command(abc.ABC):
         command's arguments.
 
         The argument `environment' is a mutable dict-like that will be
-        used as a starting point for self.make_envs, if that is created
+        used as a starting point for self.build_envs, if that is created
         in the prep_for_run() call. Subclasses can modify it as needed,
         though note that the values it contains may be overridden by the
         Command core.'''
@@ -164,14 +164,14 @@ class Command(abc.ABC):
         '''Display a warning message.'''
         print(*args, sep=sep, end=end, file=self.stderr, flush=flush)
 
-    def dbg_make_cmd(self, msg, cmd, env=None, board=None):
-        '''Special case helper for debugging invocations of make.'''
+    def dbg_zephyr_build(self, msg, cmd, env=None, board=None):
+        '''Debug helper for use when invoking the Zephyr build system.'''
         if self.arguments.debug:
             self.dbg('{}:'.format(msg))
             if board is not None:
                 self.dbg('\tBOARD={} \\'.format(board))
             if env is not None:
-                for arg in self.make_overrides:
+                for arg in self.build_overrides:
                     env_var = self.arg_to_env_var(arg)
                     if env_var not in env:
                         continue
@@ -202,8 +202,10 @@ class Command(abc.ABC):
         if 'app' in self.whitelist:
             parser.add_argument('app', nargs='+', help=self.arg_help('app'))
 
-        # These are needed by commands that invoke 'make', like 'build' and
-        # 'configure'.
+        # These are needed by commands which invoke the Zephyr build
+        # system ('build' and 'configure').
+        #
+        # TODO: determine which of these are still relevant to CMake.
         if '--zephyr-gcc-variant' in self.whitelist:
             parser.add_argument('-z', '--zephyr-gcc-variant',
                                 default=ZEPHYR_GCC_VARIANT_DEFAULT,
@@ -244,7 +246,7 @@ class Command(abc.ABC):
 
     def _prep_use_prebuilt_gccarmemb(self):
         gccarmemb = find_arm_none_eabi_gcc()
-        self.make_overrides['gccarmemb_toolchain_path'] = gccarmemb
+        self.build_overrides['gccarmemb_toolchain_path'] = gccarmemb
 
     def prep_for_run(self):
         '''Finish setting up arguments and prepare run environments.
@@ -254,7 +256,7 @@ class Command(abc.ABC):
         environments to run commands in.
 
         If '--outputs' was whitelisted, it is assumed this command is
-        invoking make, and the instance variable 'make_envs' will be set
+        building binaries, and the instance variable 'build_envs' will be set
         upon return.  It will contain the keys 'app' and 'mcuboot' as
         appropriate, and values equal to the build environments to use
         for those outputs.  These environments have BOARD unset when
@@ -279,17 +281,17 @@ class Command(abc.ABC):
                 self.arguments.outputs = [self.arguments.outputs]
 
             # Set up overridden variables.
-            self.make_overrides = {'zephyr_base': find_zephyr_base()}
+            self.build_overrides = {'zephyr_base': find_zephyr_base()}
             if self.arguments.prebuilt_toolchain.startswith('y'):
                 self._prep_use_prebuilt()
             for arg in BUILD_OPTIONS:
                 val = getattr(self.arguments, arg)
-                self.make_overrides[arg] = val
+                self.build_overrides[arg] = val
 
             # Create the application and mcuboot build environments,
             # warning when environment variables are overridden.
             app_build_env = dict(base_env)
-            for arg, val in self.make_overrides.items():
+            for arg, val in self.build_overrides.items():
                 env_var = self.arg_to_env_var(arg)
                 self._wrn_if_overridden(base_env, env_var, val)
                 app_build_env[env_var] = val
@@ -297,8 +299,8 @@ class Command(abc.ABC):
             del mcuboot_build_env['CONF_FILE']
 
             envs = {'app': app_build_env, 'mcuboot': mcuboot_build_env}
-            self.make_envs = {k: v for k, v in envs.items()
-                              if k in self.arguments.outputs}
+            self.build_envs = {k: v for k, v in envs.items()
+                               if k in self.arguments.outputs}
 
     def invoke(self, arguments):
         '''Invoke the command, with given arguments.'''
@@ -325,7 +327,6 @@ class Command(abc.ABC):
 #
 # Build
 #
-
 
 class Build(Command):
 
@@ -384,25 +385,25 @@ class Build(Command):
 
     def do_invoke(self):
         mcuboot = find_mcuboot_root()
+        outdir = self.arguments.outdir
+        debug = self.arguments.debug
 
         # Run the builds.
         for board in self.arguments.boards:
             for app in self.arguments.app:
                 app = app.rstrip(os.path.sep)
-                makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
+                source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
                 for output in self.arguments.outputs:
-                    self.do_build(board, app, output, makefile_dirs[output])
+                    self.do_build(board, app, output, source_dirs[output])
 
-                # Only generate a flashing script if we've built both outputs.
-                if self.arguments.outputs != ['app', 'mcuboot']:
+                # Only generate a flashing script if we've built all outputs.
+                if self.arguments.outputs != BUILD_OUTPUTS:
                     continue
-                outdir = self.arguments.outdir
-                debug = self.arguments.debug
                 flasher = ZephyrBinaryFlasher.create_flasher(board, app,
                                                              outdir, debug)
                 flasher.generate_script('sh')
 
-    def do_build(self, board, app, output, makefile_dir):
+    def do_build(self, board, app, output, source_dir):
         signing_app = (output == 'app' and not self.arguments.skip_signature)
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
 
@@ -412,19 +413,19 @@ class Build(Command):
         # for signing images, and also afterwards, e.g. when deciding
         # how to flash the binaries.
         cmd_build = ['make',
-                     '-C', shlex.quote(makefile_dir),
+                     '-C', shlex.quote(source_dir),
                      '-j', str(self.arguments.jobs),
                      'O={}'.format(shlex.quote(outdir))]
         cmd_exports = cmd_build + ['outputexports']
-        build_env = dict(self.make_envs[output])
+        build_env = dict(self.build_envs[output])
         build_env['BOARD'] = board
 
         try:
-            self.dbg_make_cmd('Building {} image'.format(output),
-                              cmd_build, env=build_env, board=board)
+            self.dbg_zephyr_build('Building {} image'.format(output),
+                                  cmd_build, env=build_env, board=board)
             subprocess.check_call(cmd_build, env=build_env)
-            self.dbg_make_cmd('Generating outputexports',
-                              cmd_exports, env=build_env, board=board)
+            self.dbg_zephyr_build('Generating outputexports',
+                                  cmd_exports, env=build_env, board=board)
             subprocess.check_call(cmd_exports, env=build_env)
             # Note: generating the signing command requires some Zephyr
             # build outputs.
@@ -500,24 +501,25 @@ class Configure(Command):
 
         for board in self.arguments.boards:
             for app in self.arguments.app:
-                makefile_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
+                source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
                 for output in self.arguments.outputs:
                     self.do_configure(board, app, output,
-                                      makefile_dirs[output])
+                                      source_dirs[output])
 
-    def do_configure(self, board, app, output, makefile_dir):
+    def do_configure(self, board, app, output, source_dir):
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
         cmd_configure = ['make',
-                         '-C', shlex.quote(makefile_dir),
+                         '-C', shlex.quote(source_dir),
                          '-j', str(self.arguments.jobs),
                          'O={}'.format(shlex.quote(outdir)),
                          self.arguments.configurator]
-        configure_env = dict(self.make_envs[output])
+        configure_env = dict(self.build_envs[output])
         configure_env['BOARD'] = board
 
         try:
-            self.dbg_make_cmd('Configuring {} for {}'.format(output, app),
-                              cmd_configure, env=configure_env, board=board)
+            self.dbg_zephyr_build('Configuring {} for {}'.format(output, app),
+                                  cmd_configure, env=configure_env,
+                                  board=board)
             subprocess.check_call(cmd_configure, env=configure_env)
         except subprocess.CalledProcessError as e:
             if not self.arguments.keep_going:
