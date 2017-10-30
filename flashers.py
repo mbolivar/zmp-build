@@ -120,6 +120,7 @@ class ZephyrBinaryFlasher(abc.ABC):
 
             print('#!/bin/sh', file=f)
             print(file=f)
+            print('cd $(dirname $(readlink -f $0))', file=f)
             print('# Flash mcuboot:', file=f)
             for cmd in mcuboot_cmds:
                 print(self.quote_sh_list(cmd), file=f)
