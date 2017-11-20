@@ -385,8 +385,6 @@ class Build(Command):
 
     def do_invoke(self):
         mcuboot = find_mcuboot_root()
-        outdir = self.arguments.outdir
-        debug = self.arguments.debug
 
         # Run the builds.
         for board in self.arguments.boards:
@@ -395,13 +393,6 @@ class Build(Command):
                 source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
                 for output in self.arguments.outputs:
                     self.do_build(board, app, output, source_dirs[output])
-
-                # Only generate a flashing script if we've built all outputs.
-                if self.arguments.outputs != BUILD_OUTPUTS:
-                    continue
-                flasher = ZephyrBinaryFlasher.create_flasher(board, app,
-                                                             outdir, debug)
-                flasher.generate_script('sh')
 
     def do_build(self, board, app, output, source_dir):
         signing_app = (output == 'app' and not self.arguments.skip_signature)

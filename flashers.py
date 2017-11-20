@@ -102,35 +102,6 @@ class ZephyrBinaryFlasher(abc.ABC):
         args = [shlex.quote(s) for s in cmd]
         return fmt.format(*args)
 
-    def generate_script(self, fmt):
-        '''Generate a script in the given format to flash the board.
-
-        Currently, only shell script is supported.'''
-        if fmt != 'sh':
-            raise NotImplementedError('fmt must be sh')
-        common = self._get_flash_common([], relative=True)
-        cmds = self.get_flash_commands(None, *common)
-        parent = common[1]
-        path = os.path.join(parent, 'flash.sh')
-
-        # Generate the script.
-        with open(path, 'w') as f:
-            mcuboot_cmds = cmds['mcuboot']
-            app_cmds = cmds['app']
-
-            print('#!/bin/sh', file=f)
-            print(file=f)
-            print('cd $(dirname $(readlink -f $0))', file=f)
-            print('# Flash mcuboot:', file=f)
-            for cmd in mcuboot_cmds:
-                print(self.quote_sh_list(cmd), file=f)
-            print('# Flash signed application:', file=f)
-            for cmd in app_cmds:
-                print(self.quote_sh_list(cmd), file=f)
-
-        # Make the script executable for user and group.
-        os.chmod(path, os.stat(path).st_mode | 0o110)
-
 
 class DfuUtilBinaryFlasher(ZephyrBinaryFlasher):
 
