@@ -78,8 +78,6 @@ class Command(abc.ABC):
                        (default: {})'''.format(CONF_FILE_DEFAULT),
         '--jobs': '''Number of jobs to run simultaneously (default: number of
                    available CPUs)''',
-        '--keep-going': '''If set, keep running after the first build failure.
-                         Otherwise, exit on the first failure.''',
         '--outputs': 'Which outputs to target (default: all)',
     }
 
@@ -221,9 +219,6 @@ class Command(abc.ABC):
             parser.add_argument('-j', '--jobs',
                                 type=int, default=BUILD_PARALLEL_DEFAULT,
                                 help=self.arg_help('--jobs'))
-        if '--keep-going' in self.whitelist:
-            parser.add_argument('-k', '--keep-going', action='store_true',
-                                help=self.arg_help('--keep-going'))
         if '--outputs' in self.whitelist:
             parser.add_argument('-o', '--outputs',
                                 choices=BUILD_OUTPUTS + ['all'], default='all',
@@ -429,8 +424,7 @@ class Build(Command):
                     self.wrn('Warning: used insecure default signing key.',
                              'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
         except subprocess.CalledProcessError as e:
-            if not self.arguments.keep_going:
-                raise
+            raise
 
     def sign_command(self, board, app, outdir):
         exports = ZephyrExports(outdir)
@@ -513,8 +507,7 @@ class Configure(Command):
                                   board=board)
             subprocess.check_call(cmd_configure, env=configure_env)
         except subprocess.CalledProcessError as e:
-            if not self.arguments.keep_going:
-                sys.exit(e.returncode)
+            sys.exit(e.returncode)
 
 
 #
