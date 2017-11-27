@@ -76,8 +76,8 @@ class Command(abc.ABC):
                        toolchain's location in the calling environment.''',
         '--conf-file': '''App (not mcuboot) configuration file
                        (default: {})'''.format(CONF_FILE_DEFAULT),
-        '--jobs': '''Number of jobs to run simultaneously (default: number of
-                   available CPUs)''',
+        '--jobs': '''Number of jobs to run simultaneously (the default is
+                  derived from the number of available CPUs)''',
         '--outputs': 'Which outputs to target (default: all)',
     }
 
