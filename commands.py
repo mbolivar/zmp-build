@@ -20,7 +20,7 @@ from flashers import ZephyrBinaryFlasher
 
 
 # Default values shared by multiple commands.
-BOARD_DEFAULT = '96b_nitrogen'
+BOARD_DEFAULT = 'nrf52_blenano2'
 ZEPHYR_GCC_VARIANT_DEFAULT = 'gccarmemb'
 CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
