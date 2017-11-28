@@ -4,10 +4,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import abc
+import glob
 import multiprocessing
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 
@@ -15,28 +17,16 @@ from core import find_default_outdir, find_zephyr_base, \
                  find_arm_none_eabi_gcc, find_mcuboot_root, \
                  find_app_root, find_app_outdir
 
-from exports import ZephyrExports
-from flashers import ZephyrBinaryFlasher
-
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = 'nrf52_blenano2'
 ZEPHYR_GCC_VARIANT_DEFAULT = 'gccarmemb'
-CONF_FILE_DEFAULT = 'prj.conf'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 
 # What types of build outputs to produce.
 # - app: ZMP-ready application, which can be signed for flashing or FOTA.
 # - mcuboot: ZMP bootloader, not signed and must be flashed.
 BUILD_OUTPUTS = ['app', 'mcuboot']
-
-# Build configuration from command line options that overrides environment
-# variables. Note that BOARD is special, since we can target multiple boards in
-# one script invocation, so we don't include it in this list.
-BUILD_OPTIONS = ['conf_file',
-                 'zephyr_gcc_variant',
-                 # 'board',
-                 ]
 
 # Programs which 'configure' can use to generate Zephyr .config files.
 CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
@@ -52,6 +42,54 @@ MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'
 MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
+
+
+class BuildConfiguration:
+    '''This helper class provides access to build-time configuration.
+
+    Configuration options can be read as if the object were a dict,
+    either object['CONFIG_FOO'] or object.get('CONFIG_FOO').
+
+    Configuration values in auto.conf and generated_dts_board.conf are
+    available.'''
+
+    def __init__(self, build_dir):
+        self.build_dir = build_dir
+        self.options = {}
+        self._init()
+
+    def __getitem__(self, item):
+        return self.options[item]
+
+    def get(self, option, *args):
+        return self.options.get(option, *args)
+
+    def _init(self):
+        generated = os.path.join(self.build_dir, 'zephyr', 'include',
+                                 'generated')
+        kconfig = os.path.join(self.build_dir, 'zephyr', 'kconfig', 'include',
+                               'config')
+        files = [os.path.join(generated, 'generated_dts_board.conf'),
+                 os.path.join(kconfig, 'auto.conf')]
+        for f in files:
+            self._parse(f)
+
+    def _parse(self, filename):
+        with open(filename, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                option, value = line.split('=', 1)
+                self.options[option] = self._parse_value(value)
+
+    def _parse_value(self, value):
+        if value.startswith('"') or value.startswith("'"):
+            return value.split()
+        try:
+            return int(value, 0)
+        except ValueError:
+            return value
 
 
 class Command(abc.ABC):
@@ -74,8 +112,7 @@ class Command(abc.ABC):
                        Currently, only a pre-built GCC ARM Embedded toolchain
                        is provided. Set to 'no' to prevent overriding the
                        toolchain's location in the calling environment.''',
-        '--conf-file': '''App (not mcuboot) configuration file
-                       (default: {})'''.format(CONF_FILE_DEFAULT),
+        '--conf-file': 'If given, sets app (not mcuboot) configuration file',
         '--jobs': '''Number of jobs to run simultaneously (the default is
                   derived from the number of available CPUs)''',
         '--outputs': 'Which outputs to target (default: all)',
@@ -133,10 +170,10 @@ class Command(abc.ABC):
         command's arguments.
 
         The argument `environment' is a mutable dict-like that will be
-        used as a starting point for self.build_envs, if that is created
-        in the prep_for_run() call. Subclasses can modify it as needed,
-        though note that the values it contains may be overridden by the
-        Command core.'''
+        used as a starting point for self.cmake_env, as created in the
+        prep_for_run() call. Subclasses can modify it as needed,
+        though note that the values it contains may be overridden by
+        the Command core.'''
         pass
 
     @abc.abstractmethod
@@ -161,20 +198,6 @@ class Command(abc.ABC):
     def wrn(self, *args, sep='  ', end='\n', flush=False):
         '''Display a warning message.'''
         print(*args, sep=sep, end=end, file=self.stderr, flush=flush)
-
-    def dbg_zephyr_build(self, msg, cmd, env=None, board=None):
-        '''Debug helper for use when invoking the Zephyr build system.'''
-        if self.arguments.debug:
-            self.dbg('{}:'.format(msg))
-            if board is not None:
-                self.dbg('\tBOARD={} \\'.format(board))
-            if env is not None:
-                for arg in self.build_overrides:
-                    env_var = self.arg_to_env_var(arg)
-                    if env_var not in env:
-                        continue
-                    self.dbg('\t{}={} \\'.format(env_var, env[env_var]))
-            self.dbg('\t' + ' '.join(cmd))
 
     #
     # Command core
@@ -213,7 +236,7 @@ class Command(abc.ABC):
                                 choices=['yes', 'no', 'y', 'n'],
                                 help=self.arg_help('--prebuilt-toolchain'))
         if '--conf-file' in self.whitelist:
-            parser.add_argument('-c', '--conf-file', default=CONF_FILE_DEFAULT,
+            parser.add_argument('-c', '--conf-file',
                                 help=self.arg_help('--conf-file'))
         if '--jobs' in self.whitelist:
             parser.add_argument('-j', '--jobs',
@@ -224,50 +247,28 @@ class Command(abc.ABC):
                                 choices=BUILD_OUTPUTS + ['all'], default='all',
                                 help=self.arg_help('--outputs'))
 
-        # The following toolchain-related arguments must all be in the
-        # whitelist, if any of them are.
-        toolchain_wl = ['--outputs',
-                        '--zephyr-gcc-variant',
-                        '--prebuilt-toolchain']
-        toolchain_wl_ok = (all(x in self.whitelist for x in toolchain_wl) or
-                           not any(x in self.whitelist for x in toolchain_wl))
-        assert toolchain_wl_ok, 'internal error: bad toolchain whitelist'
-
         self.do_register(parser)
 
-    def _prep_use_prebuilt(self):
-        if self.arguments.zephyr_gcc_variant == 'gccarmemb':
-            self._prep_use_prebuilt_gccarmemb()
-
-    def _prep_use_prebuilt_gccarmemb(self):
-        gccarmemb = find_arm_none_eabi_gcc()
-        self.build_overrides['gccarmemb_toolchain_path'] = gccarmemb
-
     def prep_for_run(self):
-        '''Finish setting up arguments and prepare run environments.
+        '''Finish setting up arguments and prepare run environment.
 
         Clean up the representation of some arguments, add values for
-        'pseudo-arguments' that don't have options yet, and retrieve build
-        environments to run commands in.
+        'pseudo-arguments' that don't have options yet, and create
+        environment to run commands in.
 
-        If '--outputs' was whitelisted, it is assumed this command is
-        building binaries, and the instance variable 'build_envs' will be set
-        upon return.  It will contain the keys 'app' and 'mcuboot' as
-        appropriate, and values equal to the build environments to use
-        for those outputs.  These environments have BOARD unset when
-        --board is whitelisted, but otherwise have the same value as the
-        parent environment.'''
-        base_env = dict(os.environ)
-        self.do_prep_for_run(base_env)
+        The instance variable 'command_env' will be set upon return.
+        It will be used when running commands with check_call().'''
+        self.do_prep_for_run()
+        command_env = dict(os.environ)
 
         if '--board' in self.whitelist:
             if len(self.arguments.boards) == 0:
                 self.arguments.boards = [BOARD_DEFAULT]
-            if 'BOARD' in base_env:
-                if [base_env['BOARD']] != self.arguments.boards:
+            if 'BOARD' in command_env:
+                if [command_env['BOARD']] != self.arguments.boards:
                     self.wrn('Ignoring BOARD={}: targeting {}'.format(
-                        base_env['BOARD'], self.arguments.boards))
-                del base_env['BOARD']
+                        command_env['BOARD'], self.arguments.boards))
+                del command_env['BOARD']
 
         if '--outputs' in self.whitelist:
             if self.arguments.outputs == 'all':
@@ -275,27 +276,13 @@ class Command(abc.ABC):
             else:
                 self.arguments.outputs = [self.arguments.outputs]
 
-            # Set up overridden variables.
-            self.build_overrides = {'zephyr_base': find_zephyr_base()}
-            if self.arguments.prebuilt_toolchain.startswith('y'):
-                self._prep_use_prebuilt()
-            for arg in BUILD_OPTIONS:
-                val = getattr(self.arguments, arg)
-                self.build_overrides[arg] = val
+        # Override ZEPHYR_BASE to the microPlatform tree. External
+        # trees might not have the zmP patches.
+        zephyr_base = find_zephyr_base()
+        self.override_warn(command_env, 'ZEPHYR_BASE', zephyr_base)
+        command_env['ZEPHYR_BASE'] = zephyr_base
 
-            # Create the application and mcuboot build environments,
-            # warning when environment variables are overridden.
-            app_build_env = dict(base_env)
-            for arg, val in self.build_overrides.items():
-                env_var = self.arg_to_env_var(arg)
-                self._wrn_if_overridden(base_env, env_var, val)
-                app_build_env[env_var] = val
-            mcuboot_build_env = dict(app_build_env)
-            del mcuboot_build_env['CONF_FILE']
-
-            envs = {'app': app_build_env, 'mcuboot': mcuboot_build_env}
-            self.build_envs = {k: v for k, v in envs.items()
-                               if k in self.arguments.outputs}
+        self.command_env = command_env
 
     def invoke(self, arguments):
         '''Invoke the command, with given arguments.'''
@@ -307,16 +294,49 @@ class Command(abc.ABC):
     # Miscellaneous
     #
 
-    def arg_to_env_var(self, arg):
-        return arg.upper()
+    def _cmd_to_string(self, command):
+        fmt = ' '.join('{}' for _ in command)
+        args = [shlex.quote(s) for s in command]
+        return fmt.format(*args)
 
-    def _wrn_if_overridden(self, env, env_var, val):
-        if env_var not in env or val == env[env_var]:
+    def check_call(self, command, **kwargs):
+        msg = kwargs.get('msg', 'Running command')
+        env = self.command_env
+
+        if self.arguments.debug:
+            self.dbg('{}:'.format(msg))
+            self.dbg('\tZEPHYR_BASE={}'.format(env['ZEPHYR_BASE']))
+            if 'cwd' in kwargs:
+                self.dbg('\tcwd: {}'.format(kwargs['cwd']))
+            self.dbg('\t{}'.format(self._cmd_to_string(command)))
+
+        kwargs['env'] = self.command_env
+        try:
+            subprocess.check_call(command, **kwargs)
+        except subprocess.CalledProcessError:
+            cmd = self._cmd_to_string(command)
+            print('Failed to run command: {}'.format(cmd), file=sys.stderr)
+            raise
+
+    def remove_env(self, env, env_var, val):
+        if env_var in env:
+            self.override_warn(env, env_var, val)
+            del env[env_var]
+
+    def override_env(self, env, env_var, val):
+        if env_var in env:
+            self.override_warn(env, env_var, val)
+        env[env_var] = val
+
+    def override_warn(self, env, env_var, val):
+        if env_var not in env:
             return
         env_val = env[env_var]
+        if env_val == val:
+            return
         self.wrn('Warning: overriding {}:'.format(env_var))
         self.wrn('\tenvironment value: {}'.format(env_val))
-        self.wrn('\toverridden to:     {}'.format(val))
+        self.wrn('\tusing value:       {}'.format(val))
 
 
 #
@@ -359,7 +379,7 @@ class Build(Command):
                                  implies -o app, and is incompatible with
                                  the -K option.""")
 
-    def do_prep_for_run(self, environment):
+    def do_prep_for_run(self):
         self.insecure_requested = False
         if self.arguments.skip_signature:
             if self.arguments.signing_key is not None:
@@ -380,61 +400,135 @@ class Build(Command):
 
     def do_invoke(self):
         mcuboot = find_mcuboot_root()
+        mcuboot_app_source = os.path.join(mcuboot, 'boot', 'zephyr')
+        gcc_variant = self.arguments.zephyr_gcc_variant
+
+        # For now, configure prebuilt toolchains through the environment.
+        if ('--prebuilt-toolchain' in self.whitelist and
+                self.arguments.prebuilt_toolchain.startswith('y')):
+            if gcc_variant == 'gccarmemb':
+                gccarmemb = find_arm_none_eabi_gcc()
+                self.override_env(self.command_env, 'GCCARMEMB_TOOLCHAIN_PATH',
+                                  gccarmemb)
+            else:
+                raise NotImplementedError(
+                    "no prebuilts available for {}".format(gcc_variant))
+
+        # Warn once on a GCC variant override.
+        self.override_warn(self.command_env, 'ZEPHYR_GCC_VARIANT', gcc_variant)
+
+        # Prepare the host tools and prepend them to the build
+        # environment path. These are available on Linux via the
+        # Zephyr SDK, but that may not be installed, and is not
+        # helpful on OS X.
+        self.prepare_host_tools()
 
         # Run the builds.
         for board in self.arguments.boards:
             for app in self.arguments.app:
                 app = app.rstrip(os.path.sep)
-                source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
+                source_dirs = {'app': find_app_root(app),
+                               'mcuboot': mcuboot_app_source}
                 for output in self.arguments.outputs:
                     self.do_build(board, app, output, source_dirs[output])
+
+    def prepare_host_tools(self):
+        host_tools = os.path.join(find_zephyr_base(), 'scripts')
+        outdir = os.path.join(self.arguments.outdir, 'zephyr', 'scripts')
+
+        # Ensure the output directory exists.
+        os.makedirs(outdir, exist_ok=True)
+
+        # If cmake has been called successfully to initialize the
+        # output directory, then just rebuild the host
+        # tools. Otherwise, run cmake before building.
+        if 'Makefile' not in os.listdir(outdir):
+            cmd_generate = (['cmake',
+                             '-G{}'.format('Unix Makefiles'),
+                             shlex.quote(host_tools)])
+            self.check_call(cmd_generate, cwd=outdir)
+        cmd_build = (['cmake',
+                      '--build', shlex.quote(outdir),
+                      '--',
+                      '-j{}'.format(self.arguments.jobs)])
+        self.check_call(cmd_build, cwd=outdir)
+
+        # Monkey-patch the path to add the output directory.
+        # TODO: windows?
+        out_path = os.path.join(outdir, 'kconfig')
+        path_env_val = self.command_env['PATH']
+        self.command_env['PATH'] = os.pathsep.join([out_path, path_env_val])
 
     def do_build(self, board, app, output, source_dir):
         signing_app = (output == 'app' and not self.arguments.skip_signature)
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
+        verbose = ['VERBOSE=1'] if self.arguments.debug else []
+        conf_file = (['-DCONF_FILE={}'.format(self.arguments_conf_file)]
+                     if output == 'app' and self.arguments.conf_file else [])
+        gcc_variant = self.arguments.zephyr_gcc_variant
 
-        # Application/mcuboot build command.
-        #
-        # The Zephyr build's output exports are useful during the build
-        # for signing images, and also afterwards, e.g. when deciding
-        # how to flash the binaries.
-        cmd_build = ['make',
-                     '-C', shlex.quote(source_dir),
-                     '-j', str(self.arguments.jobs),
-                     'O={}'.format(shlex.quote(outdir))]
-        cmd_exports = cmd_build + ['outputexports']
-        build_env = dict(self.build_envs[output])
-        build_env['BOARD'] = board
+        # Ensure the output directory exists.
+        os.makedirs(outdir, exist_ok=True)
 
+        # If cmake has been called successfully to initialize the
+        # output directory, then just rebuild. Otherwise, run cmake
+        # before rebuilding.
+        if 'Makefile' not in os.listdir(outdir):
+            cmd_generate = (
+                ['cmake',
+                 '-DBOARD={}'.format(shlex.quote(board)),
+                 '-DZEPHYR_GCC_VARIANT={}'.format(shlex.quote(gcc_variant)),
+                 '-G{}'.format('Unix Makefiles')] +
+                conf_file +
+                [shlex.quote(source_dir)])
+            self.check_call(cmd_generate, cwd=outdir)
+        cmd_build = (['cmake',
+                      '--build', shlex.quote(outdir),
+                      '--',
+                      '-j{}'.format(self.arguments.jobs)] +
+                     verbose)
+        self.check_call(cmd_build, cwd=outdir)
+
+        # Generate the command needed to sign the application. Note:
+        # generating the signing command requires some Zephyr build
+        # outputs, so this has to come after.
+        if signing_app:
+            cmd_sign = self.sign_command(board, app, outdir)
+            self.check_call(cmd_sign, cwd=outdir)
+            if self.insecure_requested:
+                self.wrn('Warning: used insecure default signing key.',
+                         'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
+
+        # TEMPHACK: copy artifacts around to the old locations.
+        # TODO: remove this once CI is updated to the new locations.
+        unsigned_new = os.path.join(outdir, 'zephyr', 'zephyr.bin')
+        unsigned_old = os.path.join(outdir, 'zephyr.bin')
+        self._temphack_try_copyfile(unsigned_new, unsigned_old)
+        if signing_app:
+            signed_base = '{}-{}-signed.bin'.format(os.path.basename(app),
+                                                    board)
+            signed_new = os.path.join(outdir, 'zephyr', signed_base)
+            signed_old = os.path.join(outdir, signed_base)
+            self._temphack_try_copyfile(signed_new, signed_old)
+
+    def _temphack_try_copyfile(self, src, dst):
+        # Failure happens on QEMU builds. It's not a problem, since if
+        # we get to this point, the build system has succeeded in the
+        # above check_call()s.
         try:
-            self.dbg_zephyr_build('Building {} image'.format(output),
-                                  cmd_build, env=build_env, board=board)
-            subprocess.check_call(cmd_build, env=build_env)
-            self.dbg_zephyr_build('Generating outputexports',
-                                  cmd_exports, env=build_env, board=board)
-            subprocess.check_call(cmd_exports, env=build_env)
-            # Note: generating the signing command requires some Zephyr
-            # build outputs.
-            if signing_app:
-                cmd_sign = self.sign_command(board, app, outdir)
-                self.dbg('Signing application binary:')
-                self.dbg('\t' + ' '.join(cmd_sign))
-                subprocess.check_call(cmd_sign, env=build_env)
-                if self.insecure_requested:
-                    self.wrn('Warning: used insecure default signing key.',
-                             'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
-        except subprocess.CalledProcessError as e:
-            raise
+            shutil.copyfile(src, dst)
+        except FileNotFoundError:
+            pass
 
     def sign_command(self, board, app, outdir):
-        exports = ZephyrExports(outdir)
-        align = exports.get_ensure_int('FLASH_WRITE_BLOCK_SIZE')
-        vtoff = exports.get_ensure_hex('CONFIG_TEXT_SECTION_OFFSET')
-        pad = exports.get_ensure_hex('FLASH_AREA_IMAGE_0_SIZE')
-        unsigned_bin = os.path.join(outdir, 'zephyr.bin')
+        bcfg = BuildConfiguration(outdir)
+        align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
+        vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
+        pad = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
+        unsigned_bin = os.path.join(outdir, 'zephyr', 'zephyr.bin')
         app_base = os.path.basename(app)
         app_bin_name = '{}-{}-signed.bin'.format(app_base, board)
-        signed_bin = os.path.join(outdir, app_bin_name)
+        signed_bin = os.path.join(outdir, 'zephyr', app_bin_name)
         version = self.arguments.imgtool_version
         return ['/usr/bin/env', 'python3',
                 os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
@@ -493,21 +587,10 @@ class Configure(Command):
 
     def do_configure(self, board, app, output, source_dir):
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
-        cmd_configure = ['make',
-                         '-C', shlex.quote(source_dir),
-                         '-j', str(self.arguments.jobs),
-                         'O={}'.format(shlex.quote(outdir)),
-                         self.arguments.configurator]
-        configure_env = dict(self.build_envs[output])
-        configure_env['BOARD'] = board
-
-        try:
-            self.dbg_zephyr_build('Configuring {} for {}'.format(output, app),
-                                  cmd_configure, env=configure_env,
-                                  board=board)
-            subprocess.check_call(cmd_configure, env=configure_env)
-        except subprocess.CalledProcessError as e:
-            sys.exit(e.returncode)
+        cmd_configure = ['cmake',
+                         '--build', shlex.quote(outdir),
+                         '--target', self.arguments.configurator]
+        self.check_call(cmd_configure)
 
 
 #
@@ -518,7 +601,7 @@ class Configure(Command):
 class Flash(Command):
 
     def __init__(self, *args, **kwargs):
-        kwargs['whitelist'] = {'--board', '--outdir', 'app'}
+        kwargs['whitelist'] = {'--board', '--outdir', 'app', '--outputs'}
         super(Flash, self).__init__(*args, **kwargs)
 
     @property
@@ -532,34 +615,61 @@ class Flash(Command):
     def do_register(self, parser):
         parser.add_argument('-d', '--device-id', dest='device_ids',
                             default=[], action='append',
-                            help='''Device identifier given to the flashing
-                                  tool. Should only be used with one board
-                                  target. This may be given multiple times
-                                  to target additional devices.''')
+                            help='''This command has been temporarily
+                            disabled, and will cause an error if used.''')
         parser.add_argument('-e', '--extra', default='',
-                            help='''Extra arguments to pass to the
-                                 flashing tool''')
+                            help='''This command has been temporarily
+                            disabled, and will cause an error if used.''')
 
-    def do_prep_for_run(self, environment):
+    def do_prep_for_run(self):
         if len(self.arguments.app) > 1:
             raise ValueError('only one application may be flashed at a time.')
         if self.arguments.device_ids and len(self.arguments.boards) > 1:
             raise ValueError('only one board target may be used when '
                              'specifying device ids')
 
+        if self.arguments.device_ids or self.arguments.extra:
+            # FIXME: try to convert these to use CMake. For now, since
+            # they require passing values at runtime, just disable them.
+            msg = ('--device-id and --extra are temporarily unavailable. '
+                   'They will be restored if possible.')
+            raise NotImplementedError(msg)
+
         self.arguments.app = self.arguments.app[0].rstrip(os.path.sep)
         self.arguments.extra = self.arguments.extra.split()
 
     def do_invoke(self):
-        if self.arguments.device_ids:
-            for device_id in self.arguments.device_ids:
-                flasher = ZephyrBinaryFlasher.create_flasher(
-                    self.arguments.boards[0], self.arguments.app,
-                    self.arguments.outdir, self.arguments.debug)
-                flasher.flash(device_id, self.arguments.extra)
-        else:
-            for board in self.arguments.boards:
-                flasher = ZephyrBinaryFlasher.create_flasher(
-                    board, self.arguments.app, self.arguments.outdir,
-                    self.arguments.debug)
-                flasher.flash(None, self.arguments.extra)
+        verbose = ['--', 'VERBOSE=1'] if self.arguments.debug else []
+        outdir = self.arguments.outdir
+        app = self.arguments.app
+
+        # TEMPHACK: we don't have a good way to pass dynamic
+        # information to CMake targets. Just hack it for now by
+        # passing it through a fresh environment
+        hack_app_env = dict(self.command_env)
+
+        for board in self.arguments.boards:
+            mcuboot_outdir = find_app_outdir(outdir, app, board, 'mcuboot')
+            app_outdir = find_app_outdir(outdir, app, board, 'app')
+            cmd_flash_mcuboot = (
+                ['cmake',
+                 '--build', shlex.quote(mcuboot_outdir),
+                 '--target', 'flash'] +
+                verbose)
+            cmd_flash_app = (
+                ['cmake',
+                 '--build', shlex.quote(app_outdir),
+                 '--target', 'flash'] +
+                verbose)
+
+            if 'mcuboot' in self.arguments.outputs:
+                # FIXME: restore the chip erase functionality that was
+                # present before the CMake transition.
+                self.check_call(cmd_flash_mcuboot, cwd=mcuboot_outdir)
+
+            if 'app' in self.arguments.outputs:
+                hack_bin = glob.glob(os.path.join(app_outdir, 'zephyr',
+                                                  '*-signed.bin'))[0]
+                hack_app_env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
+                subprocess.check_call(cmd_flash_app, cwd=app_outdir,
+                                      env=hack_app_env)
