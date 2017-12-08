@@ -9,7 +9,6 @@ import multiprocessing
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 
@@ -498,27 +497,6 @@ class Build(Command):
             if self.insecure_requested:
                 self.wrn('Warning: used insecure default signing key.',
                          'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
-
-        # TEMPHACK: copy artifacts around to the old locations.
-        # TODO: remove this once CI is updated to the new locations.
-        unsigned_new = os.path.join(outdir, 'zephyr', 'zephyr.bin')
-        unsigned_old = os.path.join(outdir, 'zephyr.bin')
-        self._temphack_try_copyfile(unsigned_new, unsigned_old)
-        if signing_app:
-            signed_base = '{}-{}-signed.bin'.format(os.path.basename(app),
-                                                    board)
-            signed_new = os.path.join(outdir, 'zephyr', signed_base)
-            signed_old = os.path.join(outdir, signed_base)
-            self._temphack_try_copyfile(signed_new, signed_old)
-
-    def _temphack_try_copyfile(self, src, dst):
-        # Failure happens on QEMU builds. It's not a problem, since if
-        # we get to this point, the build system has succeeded in the
-        # above check_call()s.
-        try:
-            shutil.copyfile(src, dst)
-        except FileNotFoundError:
-            pass
 
     def sign_command(self, board, app, outdir):
         bcfg = BuildConfiguration(outdir)
