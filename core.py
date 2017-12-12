@@ -3,8 +3,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import glob
 import os
 import platform
+import shutil
+import sys
 
 
 # We could be smarter about this (search for .repo, e.g.), but it seems
@@ -76,3 +79,40 @@ def find_default_outdir():
 def find_app_outdir(outdir, app, board, output):
     '''Get output (build) directory for an app output.'''
     return os.path.join(outdir, app, board, output)
+
+
+def find_zephyr_board_dir(board_name):
+    '''Get directory containing Zephyr board definition, or None.'''
+    results = glob.glob(os.path.join(find_zephyr_base(),
+                                     'boards', '*', board_name))
+    if len(results) == 1:
+        return results[0]
+    return None
+
+
+def check_boards(board_names, stream=sys.stderr):
+    '''Check for Zephyr boards.
+
+    If all the boards can be found, returns without error. Otherwise,
+    prints an error and raises FileNotFoundError.'''
+    not_found = [b for b in board_names if find_zephyr_board_dir(b) is None]
+    if not_found:
+        msg = 'Unknown board{}: {}'.format('s' if len(not_found) > 1 else '',
+                                           ', '.join(not_found))
+        print(msg, file=stream)
+        raise FileNotFoundError(msg)
+
+
+def check_dependencies(programs, stream=sys.stderr):
+    '''Check for binary program dependencies.
+
+    If all the programs in the argument iterable can be found, returns
+    without error.  Otherwise, prints an error and raises
+    FileNotFoundError.'''
+    not_found = [p for p in programs if shutil.which(p) is None]
+    if not_found:
+        msg = 'Missing dependenc{}: {}'.format(
+            'ies' if len(not_found) > 1 else 'y',
+            ', '.join(not_found))
+        print(msg, file=stream)
+        raise FileNotFoundError(msg)

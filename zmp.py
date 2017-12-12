@@ -40,10 +40,10 @@ def main():
         if args.debug:
             raise
         else:
-            re_run = '"{} --debug {} ..."'.format(PROGRAM, args.cmd)
-            print('Error: {}'.format(e), file=sys.stderr)
-            print('Re-run as {} for a stack trace.'.format(re_run),
-                  file=sys.stderr)
+            msg = ('Fatal error occurred; re-run as '
+                   '{} --debug {} ... for a stack trace.').format(
+                       PROGRAM, args.cmd)
+            print(msg, file=sys.stderr)
         sys.exit(1)
 
 

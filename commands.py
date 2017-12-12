@@ -14,7 +14,8 @@ import sys
 
 from core import find_default_outdir, find_zephyr_base, \
                  find_arm_none_eabi_gcc, find_mcuboot_root, \
-                 find_app_root, find_app_outdir
+                 find_app_root, find_app_outdir, check_boards, \
+                 check_dependencies
 
 
 # Default values shared by multiple commands.
@@ -396,6 +397,8 @@ class Build(Command):
         if not self.version_is_semver(self.arguments.imgtool_version):
             raise ValueError('{} is not in semantic versioning format'.format(
                 self.arguments.imgtool_version))
+        check_boards(self.arguments.boards)
+        check_dependencies(['cmake', 'make', 'dtc'])
 
     def do_invoke(self):
         mcuboot = find_mcuboot_root()
