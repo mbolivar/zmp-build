@@ -161,17 +161,11 @@ class Command(abc.ABC):
         '''Subclasses may override to register a register() callback.'''
         pass
 
-    def do_prep_for_run(self, environment):
+    def do_prep_for_run(self):
         '''Subclasses may override to register a prep_for_run() callback.
 
         When this method is invoked, self.arguments contains the
-        command's arguments.
-
-        The argument `environment' is a mutable dict-like that will be
-        used as a starting point for self.cmake_env, as created in the
-        prep_for_run() call. Subclasses can modify it as needed,
-        though note that the values it contains may be overridden by
-        the Command core.'''
+        command's arguments.'''
         pass
 
     @abc.abstractmethod
