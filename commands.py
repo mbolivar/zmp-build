@@ -465,7 +465,7 @@ class Build(Command):
         signing_app = (output == 'app' and not self.arguments.skip_signature)
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
         verbose = ['VERBOSE=1'] if self.arguments.debug else []
-        conf_file = (['-DCONF_FILE={}'.format(self.arguments_conf_file)]
+        conf_file = (['-DCONF_FILE={}'.format(self.arguments.conf_file)]
                      if output == 'app' and self.arguments.conf_file else [])
         gcc_variant = self.arguments.zephyr_gcc_variant
 
