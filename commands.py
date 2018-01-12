@@ -65,12 +65,10 @@ class BuildConfiguration:
         return self.options.get(option, *args)
 
     def _init(self):
-        generated = os.path.join(self.build_dir, 'zephyr', 'include',
-                                 'generated')
-        kconfig = os.path.join(self.build_dir, 'zephyr', 'kconfig', 'include',
-                               'config')
+        zephyr = os.path.join(self.build_dir, 'zephyr')
+        generated = os.path.join(zephyr, 'include', 'generated')
         files = [os.path.join(generated, 'generated_dts_board.conf'),
-                 os.path.join(kconfig, 'auto.conf')]
+                 os.path.join(zephyr, '.config')]
         for f in files:
             self._parse(f)
 
