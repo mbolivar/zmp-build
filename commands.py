@@ -378,16 +378,20 @@ class Build(Command):
                                  the -K option.""")
 
     def do_prep_for_run(self):
-        self.insecure_requested = False
         if self.arguments.skip_signature:
             if self.arguments.signing_key is not None:
                 raise ValueError('{} is incompatible with {}'.format(
                     '--skip-signature', '--signing-key'))
             self.arguments.outputs = 'app'
+
         if self.arguments.signing_key is None:
-            self.arguments.signing_key = os.path.join(find_mcuboot_root(),
-                                                      MCUBOOT_DEV_KEY)
+            key = os.path.join(find_mcuboot_root(), MCUBOOT_DEV_KEY)
             self.insecure_requested = True
+        else:
+            key = self.arguments.signing_key
+            self.insecure_requested = False
+        self.arguments.signing_key = os.path.abspath(key)
+
         if self.arguments.imgtool_version is None:
             default = MCUBOOT_IMGTOOL_VERSION_DEFAULT
             self.wrn('No --imgtool-version given, using {}'.format(default))
