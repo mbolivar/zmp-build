@@ -44,6 +44,9 @@ MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 
+# The Zephyr CMake boilerplate prints warnings about CMP0000. This clutters
+# up the build; silence it.
+CMAKE_OPTIONS = ['-Wno-dev']
 
 class BuildConfiguration:
     '''This helper class provides access to build-time configuration.
@@ -448,8 +451,8 @@ class Build(Command):
         # output directory, then just rebuild the host
         # tools. Otherwise, run cmake before building.
         if 'Makefile' not in os.listdir(outdir):
-            cmd_generate = (['cmake',
-                             '-G{}'.format('Ninja'),
+            cmd_generate = (['cmake'] + CMAKE_OPTIONS +
+                            ['-G{}'.format('Ninja'),
                              shlex.quote(host_tools)])
             self.check_call(cmd_generate, cwd=outdir)
         cmd_build = (['cmake',
@@ -480,8 +483,8 @@ class Build(Command):
         # before rebuilding.
         if 'Makefile' not in os.listdir(outdir):
             cmd_generate = (
-                ['cmake',
-                 '-DBOARD={}'.format(shlex.quote(board)),
+                ['cmake'] + CMAKE_OPTIONS +
+                ['-DBOARD={}'.format(shlex.quote(board)),
                  '-DZEPHYR_GCC_VARIANT={}'.format(shlex.quote(gcc_variant)),
                  '-G{}'.format('Ninja')] +
                 conf_file +
