@@ -239,12 +239,25 @@ def main(args):
     # Create the mergeup commit log message.
     message_lines = (
         ['Highlights',
-         '----------',
+         '==========',
          '',
-         '<Highlight messages go here>',
+         'Important Changes',
+         '-----------------',
+         '',
+         '<Important changes, like API breaks, go here>',
+         '',
+         'Features',
+         '--------',
+         '',
+         '<New features go here>',
+         '',
+         'Bug Fixes',
+         '---------',
+         '',
+         '<Notable individual fixes or notes on large groups of fixes go here>',
          '',
          'Upstream Changes',
-         '----------------',
+         '================',
          ''] +
         [area_logs[area] for area in sorted(area_logs)])
 
