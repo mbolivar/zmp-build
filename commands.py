@@ -394,7 +394,7 @@ class Build(Command):
             raise ValueError('{} is not in semantic versioning format'.format(
                 self.arguments.imgtool_version))
         check_boards(self.arguments.boards)
-        check_dependencies(['cmake', 'make', 'dtc'])
+        check_dependencies(['cmake', 'ninja', 'dtc'])
 
     def do_invoke(self):
         mcuboot = find_mcuboot_root()
@@ -442,7 +442,7 @@ class Build(Command):
         # tools. Otherwise, run cmake before building.
         if 'Makefile' not in os.listdir(outdir):
             cmd_generate = (['cmake',
-                             '-G{}'.format('Unix Makefiles'),
+                             '-G{}'.format('Ninja'),
                              shlex.quote(host_tools)])
             self.check_call(cmd_generate, cwd=outdir)
         cmd_build = (['cmake',
@@ -476,7 +476,7 @@ class Build(Command):
                 ['cmake',
                  '-DBOARD={}'.format(shlex.quote(board)),
                  '-DZEPHYR_GCC_VARIANT={}'.format(shlex.quote(gcc_variant)),
-                 '-G{}'.format('Unix Makefiles')] +
+                 '-G{}'.format('Ninja')] +
                 conf_file +
                 [shlex.quote(source_dir)])
             self.check_call(cmd_generate, cwd=outdir)
