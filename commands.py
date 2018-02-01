@@ -7,6 +7,7 @@ import abc
 import glob
 import multiprocessing
 import os
+import platform
 import re
 import shlex
 import subprocess
@@ -431,6 +432,12 @@ class Build(Command):
                     self.do_build(board, app, output, source_dirs[output])
 
     def prepare_host_tools(self):
+        if platform.system() == 'Windows':
+            # The Windows system currently does not support configuration.
+            # Upstream bug reference:
+            # https://github.com/zephyrproject-rtos/zephyr/issues/5847
+            return
+
         host_tools = os.path.join(find_zephyr_base(), 'scripts')
         outdir = os.path.join(self.arguments.outdir, 'zephyr', 'scripts')
 
@@ -551,6 +558,15 @@ class Configure(Command):
             help='''Configure front-end (default: {})'''.format(default))
 
     def do_invoke(self):
+        if platform.system() == 'Windows':
+            # The Windows system currently does not support configuration.
+            # Upstream bug reference:
+            # https://github.com/zephyrproject-rtos/zephyr/issues/5847
+            msg = ('Configuration on Windows is currently unsupported.\n'
+                   'This is an upstream Zephyr issue:\n'
+                   'https://github.com/zephyrproject-rtos/zephyr/issues/5847')
+            raise RuntimeError(msg)
+
         mcuboot = find_mcuboot_root()
 
         for board in self.arguments.boards:
