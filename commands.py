@@ -501,7 +501,6 @@ class Build(Command):
         bcfg = BuildConfiguration(outdir)
         align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
         vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
-        pad = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
         unsigned_bin = os.path.join(outdir, 'zephyr', 'zephyr.bin')
         app_base = os.path.basename(app)
         app_bin_name = '{}-{}-signed.bin'.format(app_base, board)
@@ -514,7 +513,6 @@ class Build(Command):
                 '--align', align,
                 '--header-size', vtoff,
                 '--included-header',
-                '--pad', pad,
                 '--version', shlex.quote(version),
                 shlex.quote(unsigned_bin),
                 shlex.quote(signed_bin)]
