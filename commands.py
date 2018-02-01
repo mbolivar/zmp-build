@@ -640,8 +640,6 @@ class Flash(Command):
                 verbose)
 
             if 'mcuboot' in self.arguments.outputs:
-                # FIXME: restore the chip erase functionality that was
-                # present before the CMake transition.
                 self.check_call(cmd_flash_mcuboot, cwd=mcuboot_outdir)
 
             if 'app' in self.arguments.outputs:
