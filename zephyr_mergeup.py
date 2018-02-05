@@ -109,7 +109,7 @@ def shortlog_is_revert(shortlog):
 
 def shortlog_reverts_what(shortlog):
     revert = 'Revert '
-    return shortlog[len(revert):].strip('"')
+    return shortlog[len(revert) + 1:-1]
 
 
 def shortlog_area_prefix(shortlog):
