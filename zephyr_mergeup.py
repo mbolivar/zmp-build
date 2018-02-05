@@ -9,12 +9,14 @@ changes.
 '''
 
 import argparse
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import os
 import re
+from subprocess import check_output
 import sys
 
 import pygit2
+import editdistance
 
 # This list maps the 'area' a commit affects to a list of
 # shortlog prefixes (the content before the first ':') in the Zephyr
@@ -103,6 +105,38 @@ def repo_mergeup_commits(repo_path, osf_ref, upstream_ref):
     return [c for c in walker]
 
 
+def repo_osf_commits(repo_path, osf_ref, upstream_ref):
+    '''Commits reachable in repo_path from osf_ref, but not upstream_ref.'''
+    # Note: pygit2 doesn't seem to have any ready-made rev-list
+    # equivalent, so call out to git directly to get the commit SHAs,
+    # then wrap them with pygit2 objects.
+    #
+    # TODO: reimplement in pure pygit2.
+    if repo_path is None:
+        repo_path = os.getcwd()
+
+    try:
+        repo = pygit2.Repository(repo_path)
+    except KeyError:
+        # pygit2 raises KeyError when the current path is not a Git
+        # repository.
+        msg = "Can't initialize Git repository at {}".format(repo_path)
+        raise InvalidRepositoryError(msg)
+
+    cmd = ['git', 'rev-list', '--pretty=oneline', '--reverse',
+           osf_ref, '^{}'.format(upstream_ref)]
+    output_raw = check_output(cmd, cwd=repo_path)
+    output = output_raw.decode(sys.getdefaultencoding()).splitlines()
+
+    ret = []
+    for line in output:
+        sha, _ = line.split(' ', 1)
+        commit = repo.revparse_single(sha)
+        ret.append(commit)
+
+    return ret
+
+
 def shortlog_is_revert(shortlog):
     return shortlog.startswith('Revert ')
 
@@ -110,6 +144,13 @@ def shortlog_is_revert(shortlog):
 def shortlog_reverts_what(shortlog):
     revert = 'Revert '
     return shortlog[len(revert) + 1:-1]
+
+
+def shortlog_no_sauce(shortlog):
+    if shortlog.startswith('[OSF'):
+        return shortlog[shortlog.find(']')+1:].strip()
+    else:
+        return shortlog
 
 
 def shortlog_area_prefix(shortlog):
@@ -170,6 +211,11 @@ def commit_shortlog(commit):
 def commit_area(commit):
     '''From a Zephyr commit, get its area.'''
     return shortlog_area(commit_shortlog(commit))
+
+
+def commit_is_osf(commit):
+    '''Returns True iff the commit is from an OSF email.'''
+    return commit.author.email.endswith('@opensourcefoundries.com')
 
 
 def upstream_commit_line(commit):
@@ -281,13 +327,133 @@ def mergeup_highlights_changes(upstream_commits, sha_to_area):
     return '\n'.join(message_lines)
 
 
+def mergeup_outstanding_merged(osf_commits, upstream_commits,
+                               edit_dist_threshold=3):
+    '''Compute outstanding and likely merged osf_commits.
+
+    Outstanding patches are commits in osf_commits which do not have a
+    corresponding 'Revert "[OSF xxx] something something' later in the
+    series.
+
+    Likely merged patches are outstanding patches whose shortlog
+    messages (with the OSF sauce tag removed) are within a given edit
+    distance from something present in upstream_commits.
+
+    The osf_commits list should reflect *all* patches in the OSF tree
+    that aren't present upstream, not just the ones since the most
+    recent merge base with upstream. By contrast, upstream_commits
+    should be *just* the upstream patches that are involved in the
+    mergeup.
+
+    A (outstanding, likely_merged) is returned. The first member,
+    outstanding, is an OrderedDict mapping shortlogs (with OSF sauce
+    tag) to commit objects. The second member, likely_merged, is an
+    OrderedDict mapping shortlogs (with OSF sauce tags) that are
+    likely merged upstream (by edit distance threshold) to a list of
+    the upstream commits that are the likely upstream merge commit.
+    '''
+    # Compute outstanding patches.
+    outstanding = OrderedDict()
+    for c in osf_commits:
+        if len(c.parents) > 1:
+            # Skip all the mergeup commits.
+            continue
+
+        sl = commit_shortlog(c)
+
+        if shortlog_is_revert(sl):
+            # If a shortlog marks a revert, delete the original commit
+            # from outstanding.
+            what = shortlog_reverts_what(sl)
+            if what not in outstanding:
+                import pprint
+                pprint.pprint(outstanding)
+
+                msg = "{} was reverted, but isn't present in OSF history"
+                raise RuntimeError(msg.format(what))
+            del outstanding[what]
+        else:
+            # Non-revert commits just get appended onto
+            # outstanding, keyed by shortlog to make finding
+            # them later in case they're reverted easier.
+            #
+            # We could try to support this by looking into the entire
+            # revert message to find the "This reverts commit SHA"
+            # text and computing reverts based on oid rather than
+            # shortlog. That'd be more robust, but let's not worry
+            # about it for now.
+            if sl in outstanding:
+                msg = 'duplicated commit shortlogs ({})'.format(sl)
+                raise NotImplementedError(msg)
+            outstanding[sl] = c
+
+    # Compute likely merged patches.
+    upstream_osf = [c for c in upstream_commits if commit_is_osf(c)]
+    likely_merged = OrderedDict()
+    for osf_sl, osf_c in outstanding.items():
+        def ed(upstream_commit):
+            return editdistance.eval(shortlog_no_sauce(osf_sl),
+                                     commit_shortlog(upstream_commit))
+        matches = [c for c in upstream_osf if ed(c) < edit_dist_threshold]
+        if len(matches) != 0:
+            likely_merged[osf_sl] = matches
+
+    return outstanding, likely_merged
+
+
+def mergeup_outstanding_summary(osf_only, upstream_commits):
+    outstanding, likely_merged = mergeup_outstanding_merged(osf_only,
+                                                            upstream_commits)
+    ret = []
+
+    def addl(line, comment=False):
+        if comment:
+            if line:
+                ret.append('# {}'.format(line))
+            else:
+                ret.append('#')
+        else:
+            ret.append(line)
+
+    addl('Outstanding OSF patches')
+    addl('=======================')
+    addl('')
+    for sl, c in outstanding.items():
+        addl('- {} {}'.format(commit_shortsha(c), sl))
+    addl('')
+
+    if not likely_merged:
+        return '\n'.join(ret)
+
+    addl('Likely merged OSF patches:', True)
+    addl('IMPORTANT: You probably need to revert these and re-run!', True)
+    addl('           Make sure to check the above as well; these are', True)
+    addl("           guesses that aren't always right.", True)
+    addl('', True)
+    for sl, commits in likely_merged.items():
+        addl('- "{}", likely merged as one of:'.format(sl), True)
+        for c in commits:
+            addl('\t- {} {}'.format(commit_shortsha(c),
+                                    commit_shortlog(c)),
+                 True)
+        addl('', True)
+
+    return '\n'.join(ret)
+
+
 def main(args):
+    # Upstream commits since the last mergeup.
     upstream_commits = repo_mergeup_commits(args.repo, args.osf_ref,
                                             args.upstream_ref)
+    # OSF commits SINCE ORIGINAL BASELINE COMMIT WITH UPSTREAM.
+    osf_only = repo_osf_commits(args.repo, args.osf_ref, args.upstream_ref)
 
     highlights_changes = mergeup_highlights_changes(upstream_commits,
                                                     args.sha_to_area)
+    outstanding_summary = mergeup_outstanding_summary(osf_only,
+                                                      upstream_commits)
     print(highlights_changes)
+    print(outstanding_summary)
 
 
 def _self_test():
