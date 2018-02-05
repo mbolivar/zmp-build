@@ -103,6 +103,15 @@ def repo_mergeup_commits(repo_path, osf_ref, upstream_ref):
     return [c for c in walker]
 
 
+def shortlog_is_revert(shortlog):
+    return shortlog.startswith('Revert ')
+
+
+def shortlog_reverts_what(shortlog):
+    revert = 'Revert '
+    return shortlog[len(revert):].strip('"')
+
+
 def shortlog_area_prefix(shortlog):
     '''Get the prefix of a shortlog which describes its area.
 
@@ -115,9 +124,9 @@ def shortlog_area_prefix(shortlog):
         return None
 
     # 'Revert "foo"' should map to foo's area prefix.
-    revert = 'Revert '
-    if shortlog.startswith(revert):
-        return shortlog_area_prefix(shortlog[len(revert):].strip('"'))
+    if shortlog_is_revert(shortlog):
+        shortlog = shortlog_reverts_what(shortlog)
+        return shortlog_area_prefix(shortlog)
 
     # If there is no ':', there is no area. Otherwise, the candidate
     # area is the substring up to the first ':'.
