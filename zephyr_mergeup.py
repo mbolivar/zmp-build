@@ -211,12 +211,20 @@ def check_known_area(commit, sha_to_area):
     return None
 
 
-def main(args):
-    commits = repo_mergeup_commits(args.repo, args.osf_ref, args.upstream_ref)
+def mergeup_highlights_changes(upstream_commits, sha_to_area):
+    '''Create a mergeup commit log message template.
 
+    Groups the iterable of upstream commits by area, dumping a message
+    and exiting if any are unknown. Otherwise, returns a highlights
+    template followed by the commit shortlogs grouped by area.
+
+    The sha_to_area dict maps SHA prefixes to commit areas, and
+    overrides the guesses otherwise made by this routine from the
+    shortlog.
+    '''
     area_commits = defaultdict(list)
-    for c in commits:
-        area = check_known_area(c, args.sha_to_area) or commit_area(c)
+    for c in upstream_commits:
+        area = check_known_area(c, sha_to_area) or commit_area(c)
         area_commits[area].append(c)
 
     # Map each area to a message about it that should go in the
@@ -236,7 +244,7 @@ def main(args):
         dump_unknown_commit_help(unknown_area)
         sys.exit(1)
 
-    # Create the mergeup commit log message.
+    # Create and return the mergeup commit log message template.
     message_lines = (
         ['Highlights',
          '==========',
@@ -254,16 +262,23 @@ def main(args):
          'Bug Fixes',
          '---------',
          '',
-         '<Notable individual fixes or notes on large groups of fixes go here>',
+         '<Notable fixes or notes on large groups of fixes go here>',
          '',
          'Upstream Changes',
          '================',
          ''] +
         [area_logs[area] for area in sorted(area_logs)])
 
-    mergeup_commit_log = '\n'.join(message_lines)
+    return '\n'.join(message_lines)
 
-    print(mergeup_commit_log)
+
+def main(args):
+    upstream_commits = repo_mergeup_commits(args.repo, args.osf_ref,
+                                            args.upstream_ref)
+
+    highlights_changes = mergeup_highlights_changes(upstream_commits,
+                                                    args.sha_to_area)
+    print(highlights_changes)
 
 
 def _self_test():
