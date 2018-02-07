@@ -374,6 +374,12 @@ class Build(Command):
                                  for loading by mcuboot. Use of this option
                                  implies -o app, and is incompatible with
                                  the -K option.""")
+        parser.add_argument('--imgtool-pad', action='store_true',
+                            help="""If given, the resulting signed image
+                                 will include padding all the way out to the
+                                 end of the sector. This is not normally a
+                                 good idea, as it wastes space and consumes
+                                 extra bandwidth to transmit.""")
 
     def do_prep_for_run(self):
         if self.arguments.skip_signature:
@@ -516,16 +522,20 @@ class Build(Command):
         app_bin_name = '{}-{}-signed.bin'.format(app_base, board)
         signed_bin = os.path.join(outdir, 'zephyr', app_bin_name)
         version = self.arguments.imgtool_version
-        return ['/usr/bin/env', 'python3',
-                os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
-                'sign',
-                '--key', shlex.quote(self.arguments.signing_key),
-                '--align', align,
-                '--header-size', vtoff,
-                '--included-header',
-                '--version', shlex.quote(version),
-                shlex.quote(unsigned_bin),
-                shlex.quote(signed_bin)]
+        cmd = ['/usr/bin/env', 'python3',
+               os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
+               'sign',
+               '--key', shlex.quote(self.arguments.signing_key),
+               '--align', align,
+               '--header-size', vtoff,
+               '--included-header',
+               '--version', shlex.quote(version),
+               shlex.quote(unsigned_bin),
+               shlex.quote(signed_bin)]
+        if self.arguments.imgtool_pad:
+            pad = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
+            cmd.extend(['--pad', pad])
+        return cmd
 
     def version_is_semver(self, version):
         return re.match('^\d+[.]\d+[.]\d+$', version) is not None
