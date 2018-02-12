@@ -410,7 +410,7 @@ class Build(Command):
         # If cmake has been called successfully to initialize the
         # output directory, then just rebuild the host
         # tools. Otherwise, run cmake before building.
-        if 'Makefile' not in os.listdir(outdir):
+        if 'build.ninja' not in os.listdir(outdir):
             cmd_generate = (['cmake'] + CMAKE_OPTIONS +
                             ['-G{}'.format('Ninja'),
                              shlex.quote(host_tools)])
@@ -440,7 +440,7 @@ class Build(Command):
         # If cmake has been called successfully to initialize the
         # output directory, then just rebuild. Otherwise, run cmake
         # before rebuilding.
-        if 'Makefile' not in os.listdir(outdir):
+        if 'build.ninja' not in os.listdir(outdir):
             cmd_generate = (
                 ['cmake'] + CMAKE_OPTIONS +
                 ['-DBOARD={}'.format(shlex.quote(board)),
