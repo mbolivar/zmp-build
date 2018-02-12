@@ -21,7 +21,7 @@ def main():
     top_parser = argparse.ArgumentParser()
     top_parser.add_argument('--debug', default=False, action='store_true',
                             help='If set, print extra debugging information.')
-    cmd_parsers = top_parser.add_subparsers(help='Command', dest='cmd')
+    cmd_parsers = top_parser.add_subparsers(help='command', dest='cmd')
 
     command_handlers = {}
     for sub_cls in Command.__subclasses__():

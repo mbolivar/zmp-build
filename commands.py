@@ -48,28 +48,15 @@ MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 # up the build; silence it.
 CMAKE_OPTIONS = ['-Wno-dev']
 
-# Help strings for options shared by multiple commands.
+# Help format strings for options shared by multiple commands.
 HELP = {
-    # Generally useful.
     '--board': '''Zephyr board to target (default: {}). This may be
                given multiple times to target additional boards.'''.format(
                    BOARD_DEFAULT),
-    '--outdir': '''Build directory (default: '{}' under ZMP
-                root).'''.format(find_default_outdir()),
+    '--outdir': '''build directory (default: '{}').'''.format(
+        find_default_outdir()),
+    '--outputs': 'which outputs to {} (default: all)',
     'app': 'application(s) sources',
-
-    # Needed to build, configure, etc. Zephyr.
-    '--zephyr-gcc-variant': '''Toolchain variant used by Zephyr
-                   (default: {})'''.format(ZEPHYR_GCC_VARIANT_DEFAULT),
-    '--prebuilt-toolchain': '''Whether to use a pre-built toolchain
-                   provided with ZMP, if one exists (default: 'yes').
-                   Currently, only a pre-built GCC ARM Embedded toolchain
-                   is provided. Set to 'no' to prevent overriding the
-                   toolchain's location in the calling environment.''',
-    '--conf-file': 'If given, sets app (not mcuboot) configuration file',
-    '--jobs': '''Number of jobs to run simultaneously (the default is
-              derived from the number of available CPUs)''',
-    '--outputs': 'Which outputs to target (default: all)',
 }
 
 
@@ -122,24 +109,14 @@ class BuildConfiguration:
 class Command(abc.ABC):
     '''Parent class for runnable commands.'''
 
-    def __init__(self, stdout=sys.stdout, stderr=sys.stderr, whitelist=None):
-        '''Create a new Command object, with options to whitelist commands.
+    def __init__(self, stdout=sys.stdout, stderr=sys.stderr):
+        '''Create a new command object.
 
-        If whitelist is None, all commands are whitelisted.  Otherwise,
-        it must be an iterable of common arguments to whitelist.'''
+        This doesn't actually register a command; that's done just by
+        creating a Command subclass. This creates an individual
+        instance for use, and optionally redirects its output streams.'''
         self.stdout = stdout
         self.stderr = stderr
-
-        all = HELP.keys()
-        if whitelist is None:
-            self.whitelist = all
-        else:
-            whitelist = set(whitelist)
-            if not whitelist.issubset(all):
-                bad_args = whitelist.difference(all)
-                msg = 'internal error: bad arguments {}'.format(bad_args)
-                raise ValueError(msg)
-            self.whitelist = whitelist
 
     #
     # Abstract interfaces and overridable behavior.
@@ -152,16 +129,6 @@ class Command(abc.ABC):
     @abc.abstractproperty
     def command_help(self):
         '''The top-level help string for this command to display to users.'''
-
-    def arg_help(self, argument):
-        '''Get help text for an argument provided by an abstract Command.
-
-        Subclasses may override this to provide specialized help text.'''
-        if argument not in HELP:
-            msg = ('internal error: no help available for unknown argument' +
-                   '{}'.format(argument))
-            raise ValueError(msg)
-        return HELP[argument]
 
     def do_register(self, parser):
         '''Subclasses may override to register a register() callback.'''
@@ -204,47 +171,9 @@ class Command(abc.ABC):
     def register(self, parsers):
         '''Register a command with a parser, adding arguments.
 
-        Any whitelist passed at instantiation time will be used as a
-        filter on arguments to add.'''
+        Any subclass-specific commands should be added via the
+        do_register() hook.'''
         parser = parsers.add_parser(self.command_name, help=self.command_help)
-
-        # These are generally useful for commands that operate on build
-        # artifacts.
-        if '--board' in self.whitelist:
-            parser.add_argument('-b', '--board', dest='boards',
-                                default=[], action='append',
-                                help=self.arg_help('--board'))
-        if '--outdir' in self.whitelist:
-            parser.add_argument('-O', '--outdir',
-                                default=find_default_outdir(),
-                                help=self.arg_help('--outdir'))
-        if 'app' in self.whitelist:
-            parser.add_argument('app', nargs='+', help=self.arg_help('app'))
-
-        # These are needed by commands which invoke the Zephyr build
-        # system ('build' and 'configure').
-        #
-        # TODO: determine which of these are still relevant to CMake.
-        if '--zephyr-gcc-variant' in self.whitelist:
-            parser.add_argument('-z', '--zephyr-gcc-variant',
-                                default=ZEPHYR_GCC_VARIANT_DEFAULT,
-                                help=self.arg_help('--zephyr-gcc-variant'))
-        if '--prebuilt-toolchain' in self.whitelist:
-            parser.add_argument('--prebuilt-toolchain', default='yes',
-                                choices=['yes', 'no', 'y', 'n'],
-                                help=self.arg_help('--prebuilt-toolchain'))
-        if '--conf-file' in self.whitelist:
-            parser.add_argument('-c', '--conf-file',
-                                help=self.arg_help('--conf-file'))
-        if '--jobs' in self.whitelist:
-            parser.add_argument('-j', '--jobs',
-                                type=int, default=BUILD_PARALLEL_DEFAULT,
-                                help=self.arg_help('--jobs'))
-        if '--outputs' in self.whitelist:
-            parser.add_argument('-o', '--outputs',
-                                choices=BUILD_OUTPUTS + ['all'], default='all',
-                                help=self.arg_help('--outputs'))
-
         self.do_register(parser)
 
     def prep_for_run(self):
@@ -259,20 +188,18 @@ class Command(abc.ABC):
         self.do_prep_for_run()
         command_env = dict(os.environ)
 
-        if '--board' in self.whitelist:
-            if len(self.arguments.boards) == 0:
-                self.arguments.boards = [BOARD_DEFAULT]
-            if 'BOARD' in command_env:
-                if [command_env['BOARD']] != self.arguments.boards:
-                    self.wrn('Ignoring BOARD={}: targeting {}'.format(
-                        command_env['BOARD'], self.arguments.boards))
-                del command_env['BOARD']
+        if len(self.arguments.boards) == 0:
+            self.arguments.boards = [BOARD_DEFAULT]
+        if 'BOARD' in command_env:
+            if [command_env['BOARD']] != self.arguments.boards:
+                self.wrn('Ignoring BOARD={}: targeting {}'.format(
+                    command_env['BOARD'], self.arguments.boards))
+            del command_env['BOARD']
 
-        if '--outputs' in self.whitelist:
-            if self.arguments.outputs == 'all':
-                self.arguments.outputs = BUILD_OUTPUTS
-            else:
-                self.arguments.outputs = [self.arguments.outputs]
+        if self.arguments.outputs == 'all':
+            self.arguments.outputs = BUILD_OUTPUTS
+        else:
+            self.arguments.outputs = [self.arguments.outputs]
 
         # Override ZEPHYR_BASE to the microPlatform tree. External
         # trees might not have the zmP patches.
@@ -344,7 +271,6 @@ class Command(abc.ABC):
 class Build(Command):
 
     def __init__(self, *args, **kwargs):
-        kwargs['whitelist'] = None
         super(Build, self).__init__(*args, **kwargs)
 
     @property
@@ -353,14 +279,41 @@ class Build(Command):
 
     @property
     def command_help(self):
-        return 'Build application images'
-
-    def arg_help(self, argument):
-        if argument == '--outputs':
-            return 'Which outputs to build (default: all)'
-        return super(Build, self).arg_help(argument)
+        return 'build application images'
 
     def do_register(self, parser):
+        # Common arguments.
+        parser.add_argument('-b', '--board', dest='boards', default=[],
+                            action='append', help=HELP['--board'])
+        parser.add_argument('-O', '--outdir', default=find_default_outdir(),
+                            help=HELP['--outdir'])
+        parser.add_argument('app', nargs='+', help=HELP['app'])
+        parser.add_argument('-o', '--outputs', choices=BUILD_OUTPUTS + ['all'],
+                            default='all',
+                            help=HELP['--outputs'].format('build'))
+
+        # Build-specific arguments
+        parser.add_argument('-c', '--conf-file',
+                            help='''If given, sets app (not mcuboot)
+                                 configuration file(s)''')
+        parser.add_argument('-z', '--zephyr-gcc-variant',
+                            default=ZEPHYR_GCC_VARIANT_DEFAULT,
+                            help='''Toolchain variant used by Zephyr
+                                 (default: {})'''.format(
+                                     ZEPHYR_GCC_VARIANT_DEFAULT))
+        parser.add_argument('--prebuilt-toolchain', default='yes',
+                            choices=['yes', 'no', 'y', 'n'],
+                            help='''Whether to use a pre-built toolchain
+                                 provided with ZMP, if one exists (default:
+                                 'yes'). Currently, only a pre-built GCC ARM
+                                 Embedded toolchain is provided. Set to 'no' to
+                                 prevent overriding the toolchain's location in
+                                 the calling environment.''')
+        parser.add_argument('-j', '--jobs',
+                            type=int, default=BUILD_PARALLEL_DEFAULT,
+                            help='''Number of jobs to run simultaneously (the
+                            default is derived from the number of available
+                            CPUs)''')
         parser.add_argument('-K', '--signing-key',
                             help='''Path to signing key for application
                                  binary. WARNING: if not given, an INSECURE
@@ -414,8 +367,7 @@ class Build(Command):
         gcc_variant = self.arguments.zephyr_gcc_variant
 
         # For now, configure prebuilt toolchains through the environment.
-        if ('--prebuilt-toolchain' in self.whitelist and
-                self.arguments.prebuilt_toolchain.startswith('y')):
+        if self.arguments.prebuilt_toolchain.startswith('y'):
             if gcc_variant == 'gccarmemb':
                 gccarmemb = find_arm_none_eabi_gcc()
                 self.override_env(self.command_env, 'GCCARMEMB_TOOLCHAIN_PATH',
@@ -551,7 +503,6 @@ class Build(Command):
 class Configure(Command):
 
     def __init__(self, *args, **kwargs):
-        kwargs['whitelist'] = None
         super(Configure, self).__init__(*args, **kwargs)
 
     @property
@@ -560,11 +511,20 @@ class Configure(Command):
 
     @property
     def command_help(self):
-        return '''Configure application images. If multiple apps
-               are given, the configurators are run in the order the apps
-               are specified.'''
+        return '''configure a build'''
 
     def do_register(self, parser):
+        # Common:
+        parser.add_argument('-b', '--board', dest='boards', default=[],
+                            action='append', help=HELP['--board'])
+        parser.add_argument('-O', '--outdir', default=find_default_outdir(),
+                            help=HELP['--outdir'])
+        parser.add_argument('-o', '--outputs', choices=BUILD_OUTPUTS + ['all'],
+                            default='all',
+                            help=HELP['--outputs'].format('configure'))
+        parser.add_argument('app', help='application to configure')
+
+        # Other:
         default = CONFIGURATOR_DEFAULT
         parser.add_argument(
             '-C', '--configurator',
@@ -585,11 +545,10 @@ class Configure(Command):
         mcuboot = find_mcuboot_root()
 
         for board in self.arguments.boards:
-            for app in self.arguments.app:
-                source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
-                for output in self.arguments.outputs:
-                    self.do_configure(board, app, output,
-                                      source_dirs[output])
+            app = self.arguments.app
+            source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
+            for output in self.arguments.outputs:
+                self.do_configure(board, app, output, source_dirs[output])
 
     def do_configure(self, board, app, output, source_dir):
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
@@ -607,7 +566,6 @@ class Configure(Command):
 class Flash(Command):
 
     def __init__(self, *args, **kwargs):
-        kwargs['whitelist'] = {'--board', '--outdir', 'app', '--outputs'}
         super(Flash, self).__init__(*args, **kwargs)
 
     @property
@@ -616,9 +574,19 @@ class Flash(Command):
 
     @property
     def command_help(self):
-        return 'Flash a bootloader and a signed application image to a board.'
+        return 'flash a binary or binaries to a board'
 
     def do_register(self, parser):
+        # Common:
+        parser.add_argument('-b', '--board', dest='boards', default=[],
+                            action='append', help=HELP['--board'])
+        parser.add_argument('-O', '--outdir', default=find_default_outdir(),
+                            help=HELP['--outdir'])
+        parser.add_argument('-o', '--outputs', choices=BUILD_OUTPUTS + ['all'],
+                            default='all',
+                            help=HELP['--outputs'].format('flash'))
+        parser.add_argument('app', help='application to flash')
+        # Other:
         parser.add_argument('-d', '--device-id', dest='device_ids',
                             default=[], action='append',
                             help='''This command has been temporarily
@@ -628,8 +596,6 @@ class Flash(Command):
                             disabled, and will cause an error if used.''')
 
     def do_prep_for_run(self):
-        if len(self.arguments.app) > 1:
-            raise ValueError('only one application may be flashed at a time.')
         if self.arguments.device_ids and len(self.arguments.boards) > 1:
             raise ValueError('only one board target may be used when '
                              'specifying device ids')
@@ -641,7 +607,6 @@ class Flash(Command):
                    'They will be restored if possible.')
             raise NotImplementedError(msg)
 
-        self.arguments.app = self.arguments.app[0].rstrip(os.path.sep)
         self.arguments.extra = self.arguments.extra.split()
 
     def do_invoke(self):
