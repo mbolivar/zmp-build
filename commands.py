@@ -430,7 +430,6 @@ class Build(Command):
     def do_build(self, board, app, output, source_dir):
         signing_app = (output == 'app' and not self.arguments.skip_signature)
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
-        verbose = ['VERBOSE=1'] if self.arguments.debug else []
         conf_file = (['-DCONF_FILE={}'.format(self.arguments.conf_file)]
                      if output == 'app' and self.arguments.conf_file else [])
         gcc_variant = self.arguments.zephyr_gcc_variant
@@ -453,8 +452,7 @@ class Build(Command):
         cmd_build = (['cmake',
                       '--build', shlex.quote(outdir),
                       '--',
-                      '-j{}'.format(self.arguments.jobs)] +
-                     verbose)
+                      '-j{}'.format(self.arguments.jobs)])
         self.check_call(cmd_build, cwd=outdir)
 
         # Generate the command needed to sign the application. Note:
@@ -610,7 +608,6 @@ class Flash(Command):
         self.arguments.extra = self.arguments.extra.split()
 
     def do_invoke(self):
-        verbose = ['--', 'VERBOSE=1'] if self.arguments.debug else []
         outdir = self.arguments.outdir
         app = self.arguments.app
 
@@ -625,13 +622,11 @@ class Flash(Command):
             cmd_flash_mcuboot = (
                 ['cmake',
                  '--build', shlex.quote(mcuboot_outdir),
-                 '--target', 'flash'] +
-                verbose)
+                 '--target', 'flash'])
             cmd_flash_app = (
                 ['cmake',
                  '--build', shlex.quote(app_outdir),
-                 '--target', 'flash'] +
-                verbose)
+                 '--target', 'flash'])
 
             if 'mcuboot' in self.arguments.outputs:
                 self.check_call(cmd_flash_mcuboot, cwd=mcuboot_outdir)
