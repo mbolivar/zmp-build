@@ -48,6 +48,31 @@ MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 # up the build; silence it.
 CMAKE_OPTIONS = ['-Wno-dev']
 
+# Help strings for options shared by multiple commands.
+HELP = {
+    # Generally useful.
+    '--board': '''Zephyr board to target (default: {}). This may be
+               given multiple times to target additional boards.'''.format(
+                   BOARD_DEFAULT),
+    '--outdir': '''Build directory (default: '{}' under ZMP
+                root).'''.format(find_default_outdir()),
+    'app': 'application(s) sources',
+
+    # Needed to build, configure, etc. Zephyr.
+    '--zephyr-gcc-variant': '''Toolchain variant used by Zephyr
+                   (default: {})'''.format(ZEPHYR_GCC_VARIANT_DEFAULT),
+    '--prebuilt-toolchain': '''Whether to use a pre-built toolchain
+                   provided with ZMP, if one exists (default: 'yes').
+                   Currently, only a pre-built GCC ARM Embedded toolchain
+                   is provided. Set to 'no' to prevent overriding the
+                   toolchain's location in the calling environment.''',
+    '--conf-file': 'If given, sets app (not mcuboot) configuration file',
+    '--jobs': '''Number of jobs to run simultaneously (the default is
+              derived from the number of available CPUs)''',
+    '--outputs': 'Which outputs to target (default: all)',
+}
+
+
 class BuildConfiguration:
     '''This helper class provides access to build-time configuration.
 
@@ -97,29 +122,6 @@ class BuildConfiguration:
 class Command(abc.ABC):
     '''Parent class for runnable commands.'''
 
-    HELP = {
-        # Generally useful.
-        '--board': '''Zephyr board to target (default: {}). This may be
-                   given multiple times to target additional boards.'''.format(
-                       BOARD_DEFAULT),
-        '--outdir': '''Build directory (default: '{}' under ZMP
-                    root).'''.format(find_default_outdir()),
-        'app': 'application(s) sources',
-
-        # Needed to build, configure, etc. Zephyr.
-        '--zephyr-gcc-variant': '''Toolchain variant used by Zephyr
-                       (default: {})'''.format(ZEPHYR_GCC_VARIANT_DEFAULT),
-        '--prebuilt-toolchain': '''Whether to use a pre-built toolchain
-                       provided with ZMP, if one exists (default: 'yes').
-                       Currently, only a pre-built GCC ARM Embedded toolchain
-                       is provided. Set to 'no' to prevent overriding the
-                       toolchain's location in the calling environment.''',
-        '--conf-file': 'If given, sets app (not mcuboot) configuration file',
-        '--jobs': '''Number of jobs to run simultaneously (the default is
-                  derived from the number of available CPUs)''',
-        '--outputs': 'Which outputs to target (default: all)',
-    }
-
     def __init__(self, stdout=sys.stdout, stderr=sys.stderr, whitelist=None):
         '''Create a new Command object, with options to whitelist commands.
 
@@ -128,7 +130,7 @@ class Command(abc.ABC):
         self.stdout = stdout
         self.stderr = stderr
 
-        all = Command.HELP.keys()
+        all = HELP.keys()
         if whitelist is None:
             self.whitelist = all
         else:
@@ -155,11 +157,11 @@ class Command(abc.ABC):
         '''Get help text for an argument provided by an abstract Command.
 
         Subclasses may override this to provide specialized help text.'''
-        if argument not in Command.HELP:
+        if argument not in HELP:
             msg = ('internal error: no help available for unknown argument' +
                    '{}'.format(argument))
             raise ValueError(msg)
-        return Command.HELP[argument]
+        return HELP[argument]
 
     def do_register(self, parser):
         '''Subclasses may override to register a register() callback.'''
