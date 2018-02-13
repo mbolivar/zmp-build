@@ -226,7 +226,7 @@ class Command(abc.ABC):
 
     def check_call(self, command, **kwargs):
         msg = kwargs.get('msg', 'Running command')
-        env = self.command_env
+        env = kwargs.get('env', self.command_env)
 
         if self.arguments.debug:
             self.dbg('{}:'.format(msg))
@@ -235,7 +235,7 @@ class Command(abc.ABC):
                 self.dbg('\tcwd: {}'.format(kwargs['cwd']))
             self.dbg('\t{}'.format(self._cmd_to_string(command)))
 
-        kwargs['env'] = self.command_env
+        kwargs['env'] = env
         try:
             subprocess.check_call(command, **kwargs)
         except subprocess.CalledProcessError:
@@ -629,5 +629,5 @@ class Flash(Command):
                 hack_bin = glob.glob(os.path.join(app_outdir, 'zephyr',
                                                   '*-signed.bin'))[0]
                 hack_app_env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
-                subprocess.check_call(cmd_flash_app, cwd=app_outdir,
-                                      env=hack_app_env)
+                self.check_call(cmd_flash_app, cwd=app_outdir,
+                                env=hack_app_env)
