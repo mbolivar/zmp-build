@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# Copyright 2018 Open Source Foundries, Limited
+
 '''Zephyr mergeup helper.
 
 This is a helper script for dealing with upstream merges. It looks at
