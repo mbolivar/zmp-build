@@ -21,7 +21,7 @@ from core import find_default_outdir, find_zephyr_base, \
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = 'nrf52_blenano2'
-ZEPHYR_GCC_VARIANT_DEFAULT = 'gccarmemb'
+ZEPHYR_TOOLCHAIN_VARIANT_DEFAULT = 'gccarmemb'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 
 # What types of build outputs to produce.
@@ -296,11 +296,11 @@ class Build(Command):
         parser.add_argument('-c', '--conf-file',
                             help='''If given, sets app (not mcuboot)
                                  configuration file(s)''')
-        parser.add_argument('-z', '--zephyr-gcc-variant',
-                            default=ZEPHYR_GCC_VARIANT_DEFAULT,
+        parser.add_argument('-z', '--zephyr-toolchain-variant',
+                            default=ZEPHYR_TOOLCHAIN_VARIANT_DEFAULT,
                             help='''Toolchain variant used by Zephyr
                                  (default: {})'''.format(
-                                     ZEPHYR_GCC_VARIANT_DEFAULT))
+                                     ZEPHYR_TOOLCHAIN_VARIANT_DEFAULT))
         parser.add_argument('--prebuilt-toolchain', default='yes',
                             choices=['yes', 'no', 'y', 'n'],
                             help='''Whether to use a pre-built toolchain
@@ -364,20 +364,21 @@ class Build(Command):
     def do_invoke(self):
         mcuboot = find_mcuboot_root()
         mcuboot_app_source = os.path.join(mcuboot, 'boot', 'zephyr')
-        gcc_variant = self.arguments.zephyr_gcc_variant
+        toolchain_variant = self.arguments.zephyr_toolchain_variant
 
         # For now, configure prebuilt toolchains through the environment.
         if self.arguments.prebuilt_toolchain.startswith('y'):
-            if gcc_variant == 'gccarmemb':
+            if toolchain_variant == 'gccarmemb':
                 gccarmemb = find_arm_none_eabi_gcc()
                 self.override_env(self.command_env, 'GCCARMEMB_TOOLCHAIN_PATH',
                                   gccarmemb)
             else:
                 raise NotImplementedError(
-                    "no prebuilts available for {}".format(gcc_variant))
+                    "no prebuilts available for {}".format(toolchain_variant))
 
-        # Warn once on a GCC variant override.
-        self.override_warn(self.command_env, 'ZEPHYR_GCC_VARIANT', gcc_variant)
+        # Warn once on a toolchain variant override.
+        self.override_warn(self.command_env, 'ZEPHYR_TOOLCHAIN_VARIANT',
+                           toolchain_variant)
 
         # Prepare the host tools and prepend them to the build
         # environment path. These are available on Linux via the
@@ -432,7 +433,7 @@ class Build(Command):
         outdir = find_app_outdir(self.arguments.outdir, app, board, output)
         conf_file = (['-DCONF_FILE={}'.format(self.arguments.conf_file)]
                      if output == 'app' and self.arguments.conf_file else [])
-        gcc_variant = self.arguments.zephyr_gcc_variant
+        toolchain_variant = self.arguments.zephyr_toolchain_variant
 
         # Ensure the output directory exists.
         os.makedirs(outdir, exist_ok=True)
@@ -444,7 +445,8 @@ class Build(Command):
             cmd_generate = (
                 ['cmake'] + CMAKE_OPTIONS +
                 ['-DBOARD={}'.format(shlex.quote(board)),
-                 '-DZEPHYR_GCC_VARIANT={}'.format(shlex.quote(gcc_variant)),
+                 '-DZEPHYR_TOOLCHAIN_VARIANT={}'.format(
+                     shlex.quote(toolchain_variant)),
                  '-G{}'.format('Ninja')] +
                 conf_file +
                 [shlex.quote(source_dir)])
