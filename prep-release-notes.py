@@ -107,6 +107,8 @@ def main(start_manifest, end_manifest, zmp, yaml_indent):
     zmp = abspath(zmp)
     zephyr = join(zmp, 'zephyr')
     mcuboot = join(zmp, 'mcuboot')
+    lwm2m = join(zmp, 'zephyr-fota-samples', 'dm-lwm2m')
+    hawkbit = join(zmp, 'zephyr-fota-samples', 'dm-hawkbit-mqtt')
 
     start = project_revisions(start_manifest)
     end = project_revisions(end_manifest)
@@ -115,6 +117,9 @@ def main(start_manifest, end_manifest, zmp, yaml_indent):
                                                 end['zephyr'], yaml_indent)
     mcuboot_highlights = repo_mergeup_highlights(mcuboot,  start['mcuboot'],
                                                  end['mcuboot'], yaml_indent)
+    lwm2m_commits = repo_commits(lwm2m, start['dm-lwm2m'], end['dm-lwm2m'])
+    hawkbit_commits = repo_commits(hawkbit, start['dm-hawkbit-mqtt'],
+                                   end['dm-hawkbit-mqtt'])
 
     print('#', '=' * 70)
     print('# Zephyr highlights:')
@@ -125,7 +130,14 @@ def main(start_manifest, end_manifest, zmp, yaml_indent):
     print(mcuboot_highlights)
 
     print('#', '=' * 70)
-    print('# WARNING: no release notes for sample applications above')
+    print('# dm-lwm2m commits:')
+    for c in lwm2m_commits:
+        print('# - {} {}'.format(commit_shortsha(c), commit_shortlog(c)))
+
+    print('#', '=' * 70)
+    print('# dm-hawkbit-mqtt commits:')
+    for c in hawkbit_commits:
+        print('# - {} {}'.format(commit_shortsha(c), commit_shortlog(c)))
 
 
 if __name__ == '__main__':
