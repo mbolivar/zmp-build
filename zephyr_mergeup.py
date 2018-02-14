@@ -20,6 +20,10 @@ import sys
 import pygit2
 import editdistance
 
+from pygit2_helpers import shortlog_is_revert, shortlog_reverts_what, \
+    shortlog_no_sauce, commit_shortsha, commit_shortlog, \
+    commit_is_osf, upstream_commit_line
+
 # This list maps the 'area' a commit affects to a list of
 # shortlog prefixes (the content before the first ':') in the Zephyr
 # commit shortlogs that belong to it.
@@ -139,22 +143,6 @@ def repo_osf_commits(repo_path, osf_ref, upstream_ref):
     return ret
 
 
-def shortlog_is_revert(shortlog):
-    return shortlog.startswith('Revert ')
-
-
-def shortlog_reverts_what(shortlog):
-    revert = 'Revert '
-    return shortlog[len(revert) + 1:-1]
-
-
-def shortlog_no_sauce(shortlog):
-    if shortlog.startswith('[OSF'):
-        return shortlog[shortlog.find(']')+1:].strip()
-    else:
-        return shortlog
-
-
 def shortlog_area_prefix(shortlog):
     '''Get the prefix of a shortlog which describes its area.
 
@@ -200,29 +188,9 @@ def shortlog_area(shortlog):
     return None
 
 
-def commit_shortsha(commit, len=8):
-    '''Return a short version of the commit SHA.'''
-    return str(commit.oid)[:len]
-
-
-def commit_shortlog(commit):
-    '''Return the first line in a commit's log message.'''
-    return commit.message.splitlines()[0]
-
-
 def commit_area(commit):
     '''From a Zephyr commit, get its area.'''
     return shortlog_area(commit_shortlog(commit))
-
-
-def commit_is_osf(commit):
-    '''Returns True iff the commit is from an OSF email.'''
-    return commit.author.email.endswith('@opensourcefoundries.com')
-
-
-def upstream_commit_line(commit):
-    '''Get a line for a mergeup commit message about the given commit.'''
-    return '- {} {}'.format(commit_shortsha(commit), commit_shortlog(commit))
 
 
 def upstream_area_message(area, commits):

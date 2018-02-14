@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import collections
-from datetime import datetime, timezone, timedelta
 from io import StringIO
 from itertools import dropwhile, takewhile
 import os
@@ -10,7 +9,9 @@ import textwrap
 from xml.etree import ElementTree
 
 import click
-import pygit2
+
+from pygit2_helpers import repo_commits, \
+    commit_date, commit_shortsha, commit_shortlog
 
 DEFAULT_INDENT = 12
 MERGEUP_SAUCE_TAGS = ['LTD mergeup', 'OSF mergeup']
@@ -24,19 +25,12 @@ UPSTREAM_CHANGES = ['''upstream changes
 ================''']
 
 
-def is_mergeup_commit(commit):
-    short = commit.message.splitlines()[0]
-    return any(tag in short for tag in MERGEUP_SAUCE_TAGS)
-
-
 def mergeup_commits(repository_path, start_sha, end_sha):
-    repository = pygit2.init_repository(repository_path)
-    sort = pygit2.GIT_SORT_TIME | pygit2.GIT_SORT_TOPOLOGICAL
-    start = repository.revparse_single(start_sha).oid
-    end = repository.revparse_single(end_sha).oid
-    walker = repository.walk(end, sort)
-    walker.hide(start)
-    return [c for c in walker if is_mergeup_commit(c)]
+    def is_mergeup_commit(commit):
+        short = commit.message.splitlines()[0]
+        return any(tag in short for tag in MERGEUP_SAUCE_TAGS)
+    return repo_commits(repository_path, start_sha, end_sha,
+                        filter=is_mergeup_commit)
 
 
 def mergeup_highlights(commit):
@@ -50,13 +44,6 @@ def mergeup_highlights(commit):
     start = dropwhile(is_not_highlights, paragraphs)
     hls = [hl for hl in takewhile(is_not_upstream_changes, start)]
     return hls[1:]  # skip HIGHLIGHTS itself
-
-
-def commit_date(commit):
-    author_timestamp = float(commit.author.time)
-    author_time_offset = commit.author.offset
-    author_tz = timezone(timedelta(minutes=author_time_offset))
-    return datetime.fromtimestamp(author_timestamp, author_tz)
 
 
 def repo_mergeup_highlights(repo, start, end, yaml_indent):
