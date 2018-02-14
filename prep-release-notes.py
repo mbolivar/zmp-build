@@ -30,7 +30,8 @@ def is_mergeup_commit(commit):
 
 def mergeup_commits(repository_path, baseline_commit):
     repository = pygit2.init_repository(repository_path)
-    walker = repository.walk(repository.head.target, pygit2.GIT_SORT_TIME)
+    sort = pygit2.GIT_SORT_TIME | pygit2.GIT_SORT_TOPOLOGICAL
+    walker = repository.walk(repository.head.target, sort)
     walker.hide(baseline_commit)
     return [c for c in walker if is_mergeup_commit(c)]
 
