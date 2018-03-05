@@ -34,8 +34,8 @@ from pygit2_helpers import shortlog_is_revert, shortlog_reverts_what, \
 #
 # Keep its definition sorted alphabetically by key.
 AREA_TO_SHORTLOG_RES = [
-    ('Arches', ['arch(/.*)?', 'arc(/.*)?', 'arm(/.*)?', 'native(/.*)?',
-                'nios2(/.*)?', 'posix(/.*)?', 'lpc(/.*)?',
+    ('Arches', ['arch(/.*)?', 'arc(/.*)?', 'arm(/.*)?', 'esp32(/.*)?',
+                'native(/.*)?', 'nios2(/.*)?', 'posix(/.*)?', 'lpc(/.*)?',
                 'riscv32(/.*)?', 'soc(/.*)?', 'x86(/.*)?', 'xtensa(/.*)?']),
     ('Bluetooth', ['bluetooth']),
     ('Boards', ['boards?(/.*)?']),
@@ -439,6 +439,7 @@ def _self_test():
         ('Arches', 'arm: implement API to validate user buffer'),
         ('Arches',
          'xtensa/asm2: Add a _new_thread implementation for asm2/switch'),
+        ('Arches', 'esp32: Set CPU pointer on app cpu at startup'),
         ('Bluetooth', 'Bluetooth: Mesh: Fix typo in Kconfig help message'),
         ('Boards', 'boards: nios2: altera_max10: cleanup board documentation'),
         ('Build', 'cmake: Fix the dependency between qemu and the elf file'),
