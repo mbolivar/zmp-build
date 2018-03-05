@@ -57,7 +57,7 @@ AREA_TO_SHORTLOG_RES = [
                  # as drivers
                  'console', 'random', 'storage']),
     ('External', ['ext', 'hal', 'stm32cube']),
-    ('File Systems', ['fs', 'disks?']),
+    ('Storage', ['fs', 'disks?']),
     ('Firmware Update', ['dfu']),
     ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q']),
     ('Libraries', ['libc?', 'json', 'ring_buffer']),
@@ -480,7 +480,7 @@ def _self_test():
         ('External', 'ext: hal: altera: Add Altera HAL README file'),
         ('Firmware Update',
          'dfu: replace FLASH_ALIGN with FLASH_WRITE_BLOCK_SIZE'),
-        ('File Systems', 'disk: delete the GET_DISK_SIZE IOCTL.'),
+        ('Storage', 'disk: delete the GET_DISK_SIZE IOCTL.'),
         ('Kernel', 'kernel: stack: add -fstack-protector-all without checks'),
         ('Kernel',
          'Revert "kernel: stack: add -fstack-protector-all without checks"'),
