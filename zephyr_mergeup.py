@@ -62,7 +62,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Maintainers', ['CODEOWNERS([.]rst)?']),
     ('Miscellaneous', ['misc', 'release', 'shell', 'printk', 'version']),
     ('Networking', ['net(/.*)?']),
-    ('Samples', ['samples?']),
+    ('Samples', ['samples?(/.*)?']),
     ('Scripts', ['scripts?', 'runner']),
     ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
     ]
@@ -495,6 +495,8 @@ def _self_test():
         ('Networking', 'net: if: fix ND reachable calculation'),
         ('Networking', 'net/ieee802154: Make RAW mode generic'),
         ('Samples', 'samples: echo_server: Test the nrf build in CI'),
+        ('Samples',
+         'samples/xtensa-asm2: Unit test for new Xtensa assembly primitives'),
         ('Scripts',
          'scripts: runner: nrfjprog: remove BOARD environment requirement'),
         ('Scripts', "scripts: jlink: Don't reset after load"),
