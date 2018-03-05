@@ -57,7 +57,7 @@ AREA_TO_SHORTLOG_RES = [
                  # as drivers
                  'console', 'random', 'storage']),
     ('External', ['ext', 'hal', 'stm32cube']),
-    ('Storage', ['fs', 'disks?']),
+    ('Storage', ['fs', 'disks?', 'fcb']),
     ('Firmware Update', ['dfu']),
     ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q']),
     ('Libraries', ['libc?', 'json', 'ring_buffer']),
@@ -481,6 +481,8 @@ def _self_test():
         ('Firmware Update',
          'dfu: replace FLASH_ALIGN with FLASH_WRITE_BLOCK_SIZE'),
         ('Storage', 'disk: delete the GET_DISK_SIZE IOCTL.'),
+        ('Storage',
+         'subsys: fcb: Check for mutex lock failure when walking FCB'),
         ('Kernel', 'kernel: stack: add -fstack-protector-all without checks'),
         ('Kernel',
          'Revert "kernel: stack: add -fstack-protector-all without checks"'),
