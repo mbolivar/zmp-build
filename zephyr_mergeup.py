@@ -52,7 +52,7 @@ AREA_TO_SHORTLOG_RES = [
                  'flash', 'gpio', 'grove', 'i2c', 'i2s',
                  'interrupt_controller', 'ipm', 'led_strip', 'led', 'pci',
                  'pinmux', 'pwm', 'rtc', 'sensors?', 'serial', 'shared_irq',
-                 'spi', 'timer', 'usb', 'watchdog',
+                 'spi', 'timer', 'uart', 'usb', 'watchdog',
                  # Technically in subsys/ (or parts are), but treated
                  # as drivers
                  'console', 'random', 'storage']),
@@ -473,6 +473,7 @@ def _self_test():
         ('Drivers',
          'usb: netusb: Use lower addresses for default endpoint config'),
         ('Drivers', 'device: cleanup header layout'),
+        ('Drivers', 'uart: fixing pin range being too tight for the nrf52840'),
         ('Documentation', 'doc/dts: Update to reflect new path locations'),
         ('Documentation', 'doc: boards: v2m_beetle: fix conversion to cmake'),
         ('Documentation', 'doxygen: ignore misc/util.h'),
