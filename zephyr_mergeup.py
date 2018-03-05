@@ -58,7 +58,7 @@ AREA_TO_SHORTLOG_RES = [
     ('External', ['ext', 'hal', 'stm32cube']),
     ('File Systems', ['fs', 'disks?']),
     ('Firmware Update', ['dfu']),
-    ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls']),
+    ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q']),
     ('Libraries', ['libc?', 'json', 'ring_buffer']),
     ('Maintainers', ['CODEOWNERS([.]rst)?']),
     ('Miscellaneous', ['misc', 'release', 'shell', 'printk', 'version']),
@@ -483,6 +483,9 @@ def _self_test():
         ('Kernel', 'mempool: add assertion for calloc bounds overflow'),
         ('Kernel',
          'syscalls: REVERTME: clean up warnings when building unit tests'),
+        ('Kernel',
+         ('work_q: Correctly clear pending flag in delayed work queue, '
+          'update docs')),
         ('Libraries',
          'libc: some architectures do not require baremetal libc'),
         ('Libraries', 'lib: move ring_buffer from misc/ to lib/'),
