@@ -40,7 +40,7 @@ CONFIGURATOR_DEFAULT = 'menuconfig'
 # Development-only firmware binary signing key.
 MCUBOOT_DEV_KEY = 'root-rsa-2048.pem'
 # Version to write to signed binaries when none is specified.
-MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0'
+MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0+0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 
@@ -320,7 +320,7 @@ class Build(Command):
                                  default key is used which should NOT be
                                  used for production images.''')
         parser.add_argument('-V', '--imgtool-version',
-                            help='''Image version in X.Y.Z semantic
+                            help='''Image version in X.Y.Z+B semantic
                                  versioning format (default: {})'''.format(
                                      MCUBOOT_IMGTOOL_VERSION_DEFAULT))
         parser.add_argument('--skip-signature',
@@ -492,7 +492,7 @@ class Build(Command):
         return cmd
 
     def version_is_semver(self, version):
-        return re.match('^\d+[.]\d+[.]\d+$', version) is not None
+        return re.match('^\d+[.]\d+[.]\d+([+]\d+)?$', version) is not None
 
 
 #
