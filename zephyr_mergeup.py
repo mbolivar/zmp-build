@@ -56,7 +56,7 @@ AREA_TO_SHORTLOG_RES = [
                  # Technically in subsys/ (or parts are), but treated
                  # as drivers
                  'console', 'random', 'storage']),
-    ('External', ['ext', 'hal', 'stm32cube']),
+    ('External', ['ext(/.*)?', 'hal', 'stm32cube']),
     ('Storage', ['fs', 'disks?', 'fcb']),
     ('Firmware Update', ['dfu', 'mgmt']),
     ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q']),
@@ -478,6 +478,7 @@ def _self_test():
         ('Documentation', 'doc: boards: v2m_beetle: fix conversion to cmake'),
         ('Documentation', 'doxygen: ignore misc/util.h'),
         ('External', 'ext: hal: altera: Add Altera HAL README file'),
+        ('External', 'ext/hal: stm32cube: Update STM32F0 README file'),
         ('Firmware Update',
          'dfu: replace FLASH_ALIGN with FLASH_WRITE_BLOCK_SIZE'),
         ('Firmware Update', 'subsys: mgmt: SMP protocol for mcumgr.'),
