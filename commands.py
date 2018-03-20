@@ -414,9 +414,20 @@ class Build(Command):
 
     def build_mcuboot(self, app, board):
         outdir = find_mcuboot_outdir(self.arguments.outdir, app, board)
-        mcuboot_app = os.path.join(find_mcuboot_root(), 'boot', 'zephyr')
+        mcuboot_source = os.path.join(find_mcuboot_root(), 'boot', 'zephyr')
         gen_options = ['-DBOARD={}'.format(board)]
-        self.cmake_build(mcuboot_app, outdir, gen_options)
+
+        # If the application sources contain a
+        # boards/$BOARD-mcuboot.overlay, bring it into the MCUboot
+        # build by default.
+        app_source = find_app_root(app)
+        app_mcuboot_overlay = os.path.join(
+            app_source, 'boards', '{}-mcuboot.overlay'.format(board))
+        if os.path.exists(app_mcuboot_overlay):
+            gen_options.extend(['-DDTC_OVERLAY_FILE={}'.format(
+                    shlex.quote(app_mcuboot_overlay))])
+
+        self.cmake_build(mcuboot_source, outdir, gen_options)
 
     def build_app(self, app, board):
         outdir = find_app_outdir(self.arguments.outdir, app, board)
