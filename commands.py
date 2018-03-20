@@ -207,7 +207,11 @@ class Command(abc.ABC):
         # Override ZEPHYR_BASE to the microPlatform tree. External
         # trees might not have the zmP patches.
         zephyr_base = find_zephyr_base()
-        self.override_warn(command_env, 'ZEPHYR_BASE', zephyr_base)
+        env_val = command_env.get('ZEPHYR_BASE')
+        if env_val is not None and env_val != zephyr_base:
+            self.wrn('Warning: overriding ZEPHYR_BASE:')
+            self.wrn('\tenvironment value: {}'.format(env_val))
+            self.wrn('\tusing value:       {}'.format(zephyr_base))
         command_env['ZEPHYR_BASE'] = zephyr_base
 
         self.command_env = command_env
@@ -245,26 +249,6 @@ class Command(abc.ABC):
             cmd = self._cmd_to_string(command)
             print('Failed to run command: {}'.format(cmd), file=sys.stderr)
             raise
-
-    def remove_env(self, env, env_var, val):
-        if env_var in env:
-            self.override_warn(env, env_var, val)
-            del env[env_var]
-
-    def override_env(self, env, env_var, val):
-        if env_var in env:
-            self.override_warn(env, env_var, val)
-        env[env_var] = val
-
-    def override_warn(self, env, env_var, val):
-        if env_var not in env:
-            return
-        env_val = env[env_var]
-        if env_val == val:
-            return
-        self.wrn('Warning: overriding {}:'.format(env_var))
-        self.wrn('\tenvironment value: {}'.format(env_val))
-        self.wrn('\tusing value:       {}'.format(val))
 
 
 #
@@ -373,23 +357,6 @@ class Build(Command):
         check_dependencies(['cmake', 'ninja', 'dtc'])
 
     def do_invoke(self):
-        toolchain_variant = self.arguments.zephyr_toolchain_variant
-
-        # For now, configure prebuilt toolchains through the environment.
-        if self.arguments.prebuilt_toolchain.startswith('y'):
-            if toolchain_variant == 'gccarmemb':
-                gccarmemb = find_arm_none_eabi_gcc()
-                self.override_env(self.command_env, 'GCCARMEMB_TOOLCHAIN_PATH',
-                                  gccarmemb)
-            else:
-                raise NotImplementedError(
-                    "no prebuilts available for {}".format(toolchain_variant))
-
-        # Warn once on a toolchain variant override.
-        self.override_warn(self.command_env, 'ZEPHYR_TOOLCHAIN_VARIANT',
-                           toolchain_variant)
-
-        # Run the builds.
         for app in self.arguments.app:
             app = app.rstrip(os.path.sep)
             for board in self.arguments.boards:
@@ -412,10 +379,24 @@ class Build(Command):
                       '-j{}'.format(self.arguments.jobs)])
         self.check_call(cmd_build, cwd=outdir)
 
+    def toolchain_args(self):
+        if not self.arguments.prebuilt_toolchain.startswith('y'):
+            return []
+
+        toolchain_variant = self.arguments.zephyr_toolchain_variant
+        if toolchain_variant == 'gccarmemb':
+            return [
+                '-DZEPHYR_TOOLCHAIN_VARIANT=gccarmemb',
+                '-DGCCARMEMB_TOOLCHAIN_PATH={}'.format(
+                    shlex.quote(find_arm_none_eabi_gcc()))]
+        else:
+            raise NotImplementedError(
+                "no prebuilts available for {}".format(toolchain_variant))
+
     def build_mcuboot(self, app, board):
         outdir = find_mcuboot_outdir(self.arguments.outdir, app, board)
         mcuboot_source = os.path.join(find_mcuboot_root(), 'boot', 'zephyr')
-        gen_options = ['-DBOARD={}'.format(board)]
+        gen_options = ['-DBOARD={}'.format(board)] + self.toolchain_args()
 
         # If the application sources contain a
         # boards/$BOARD-mcuboot.overlay, bring it into the MCUboot
@@ -431,7 +412,7 @@ class Build(Command):
 
     def build_app(self, app, board):
         outdir = find_app_outdir(self.arguments.outdir, app, board)
-        gen_options = ['-DBOARD={}'.format(board)]
+        gen_options = ['-DBOARD={}'.format(board)] + self.toolchain_args()
         if self.arguments.conf_file:
             gen_options.append('-DCONF_FILE={}'.format(
                 self.arguments.conf_file))
