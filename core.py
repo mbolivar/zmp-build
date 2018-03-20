@@ -66,6 +66,12 @@ def find_mcuboot_root():
     return os.path.join(find_zmp_root(), MCUBOOT_PATH)
 
 
+def find_mcuboot_outdir(outdir, app, board):
+    '''Get output (build) directory for MCUboot for a given app/board.'''
+    app_outdir = find_app_outdir(outdir, app, board)
+    return os.path.abspath(os.path.join(app_outdir, os.pardir, 'mcuboot'))
+
+
 def find_sdk_build_root():
     '''Get absolute path to SDK build directory.'''
     return os.path.dirname(os.path.realpath(__file__))
@@ -76,9 +82,9 @@ def find_default_outdir():
     return os.path.join(find_zmp_root(), BUILD_DIR_DEFAULT)
 
 
-def find_app_outdir(outdir, app, board, output):
-    '''Get output (build) directory for an app output.'''
-    return os.path.join(outdir, app, board, output)
+def find_app_outdir(outdir, app, board):
+    '''Get output (build) directory for an application.'''
+    return os.path.abspath(os.path.join(outdir, app, board, 'app'))
 
 
 def find_zephyr_board_dir(board_name):

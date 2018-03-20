@@ -14,9 +14,10 @@ import subprocess
 import sys
 
 from core import find_default_outdir, find_zephyr_base, \
-                 find_arm_none_eabi_gcc, find_mcuboot_root, \
+                 find_arm_none_eabi_gcc, \
+                 find_mcuboot_root, find_mcuboot_outdir, \
                  find_app_root, find_app_outdir, check_boards, \
-                 check_dependencies
+                 check_dependencies, find_sdk_build_root
 
 
 # Default values shared by multiple commands.
@@ -44,9 +45,11 @@ MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0+0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 
+# We currently enforce use of Ninja as a generated build system type.
+#
 # The Zephyr CMake boilerplate prints warnings about CMP0000. This clutters
-# up the build; silence it.
-CMAKE_OPTIONS = ['-Wno-dev']
+# up the build; silence it with -Wno-dev.
+CMAKE_OPTIONS = ['-GNinja', '-Wno-dev']
 
 # Help format strings for options shared by multiple commands.
 HELP = {
@@ -323,12 +326,12 @@ class Build(Command):
                             help='''Image version in X.Y.Z+B semantic
                                  versioning format (default: {})'''.format(
                                      MCUBOOT_IMGTOOL_VERSION_DEFAULT))
-        parser.add_argument('--skip-signature',
+        parser.add_argument('--no-bootloader', '--skip-signature',
                             action='store_true',
-                            help="""If set, don't sign the resulting binary
-                                 for loading by mcuboot. Use of this option
+                            help="""If set, don't build the application for
+                                 chain-loading by MCUBoot. Use of this option
                                  implies -o app, and is incompatible with
-                                 the -K option.""")
+                                 the -K and --imgtool-xxx options.""")
         parser.add_argument('--imgtool-pad', action='store_true',
                             help="""If given, the resulting signed image
                                  will include padding all the way out to the
@@ -337,33 +340,39 @@ class Build(Command):
                                  extra bandwidth to transmit.""")
 
     def do_prep_for_run(self):
-        if self.arguments.skip_signature:
+        if self.arguments.no_bootloader:
             if self.arguments.signing_key is not None:
                 raise ValueError('{} is incompatible with {}'.format(
-                    '--skip-signature', '--signing-key'))
+                    '--no-bootloader', '--signing-key'))
+            elif self.arguments.imgtool_version is not None:
+                raise ValueError('{} is incompatible with {}'.format(
+                    '--no-bootloader', '--imgtool-version'))
+            elif self.arguments.imgtool_pad:
+                raise ValueError('{} is incompatible with {}'.format(
+                    '--no-bootloader', '--imgtool-pad'))
             self.arguments.outputs = 'app'
-
-        if self.arguments.signing_key is None:
-            key = os.path.join(find_mcuboot_root(), MCUBOOT_DEV_KEY)
-            self.insecure_requested = True
         else:
-            key = self.arguments.signing_key
-            self.insecure_requested = False
-        self.arguments.signing_key = os.path.abspath(key)
+            if self.arguments.imgtool_version is None:
+                default = MCUBOOT_IMGTOOL_VERSION_DEFAULT
+                self.wrn('No --imgtool-version given, using {}'.format(
+                    default))
+                self.arguments.imgtool_version = default
+            if not self.version_is_semver(self.arguments.imgtool_version):
+                msg = '{} is not in semantic versioning format'
+                raise ValueError(msg.format(self.arguments.imgtool_version))
 
-        if self.arguments.imgtool_version is None:
-            default = MCUBOOT_IMGTOOL_VERSION_DEFAULT
-            self.wrn('No --imgtool-version given, using {}'.format(default))
-            self.arguments.imgtool_version = default
-        if not self.version_is_semver(self.arguments.imgtool_version):
-            raise ValueError('{} is not in semantic versioning format'.format(
-                self.arguments.imgtool_version))
+            if self.arguments.signing_key is None:
+                key = os.path.join(find_mcuboot_root(), MCUBOOT_DEV_KEY)
+                self.insecure_requested = True
+            else:
+                key = self.arguments.signing_key
+                self.insecure_requested = False
+            self.arguments.signing_key = os.path.abspath(key)
+
         check_boards(self.arguments.boards)
         check_dependencies(['cmake', 'ninja', 'dtc'])
 
     def do_invoke(self):
-        mcuboot = find_mcuboot_root()
-        mcuboot_app_source = os.path.join(mcuboot, 'boot', 'zephyr')
         toolchain_variant = self.arguments.zephyr_toolchain_variant
 
         # For now, configure prebuilt toolchains through the environment.
@@ -381,54 +390,62 @@ class Build(Command):
                            toolchain_variant)
 
         # Run the builds.
-        for board in self.arguments.boards:
-            for app in self.arguments.app:
-                app = app.rstrip(os.path.sep)
-                source_dirs = {'app': find_app_root(app),
-                               'mcuboot': mcuboot_app_source}
-                for output in self.arguments.outputs:
-                    self.do_build(board, app, output, source_dirs[output])
+        for app in self.arguments.app:
+            app = app.rstrip(os.path.sep)
+            for board in self.arguments.boards:
+                if 'mcuboot' in self.arguments.outputs:
+                    self.build_mcuboot(app, board)
+                if 'app' in self.arguments.outputs:
+                    self.build_app(app, board)
 
-    def do_build(self, board, app, output, source_dir):
-        signing_app = (output == 'app' and not self.arguments.skip_signature)
-        outdir = find_app_outdir(self.arguments.outdir, app, board, output)
-        conf_file = (['-DCONF_FILE={}'.format(self.arguments.conf_file)]
-                     if output == 'app' and self.arguments.conf_file else [])
-        toolchain_variant = self.arguments.zephyr_toolchain_variant
-
-        # Ensure the output directory exists.
+    def cmake_build(self, sourcedir, outdir, gen_options):
         os.makedirs(outdir, exist_ok=True)
 
-        # If cmake has been called successfully to initialize the
-        # output directory, then just rebuild. Otherwise, run cmake
-        # before rebuilding.
         if 'build.ninja' not in os.listdir(outdir):
-            cmd_generate = (
-                ['cmake'] + CMAKE_OPTIONS +
-                ['-DBOARD={}'.format(shlex.quote(board)),
-                 '-DZEPHYR_TOOLCHAIN_VARIANT={}'.format(
-                     shlex.quote(toolchain_variant)),
-                 '-G{}'.format('Ninja')] +
-                conf_file +
-                [shlex.quote(source_dir)])
+            cmd_generate = (['cmake'] + CMAKE_OPTIONS +
+                            gen_options + [shlex.quote(sourcedir)])
             self.check_call(cmd_generate, cwd=outdir)
+
         cmd_build = (['cmake',
                       '--build', shlex.quote(outdir),
                       '--',
                       '-j{}'.format(self.arguments.jobs)])
         self.check_call(cmd_build, cwd=outdir)
 
-        # Generate the command needed to sign the application. Note:
-        # generating the signing command requires some Zephyr build
-        # outputs, so this has to come after.
-        if signing_app:
-            cmd_sign = self.sign_command(board, app, outdir)
-            self.check_call(cmd_sign, cwd=outdir)
-            if self.insecure_requested:
-                self.wrn('Warning: used insecure default signing key.',
-                         'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
+    def build_mcuboot(self, app, board):
+        outdir = find_mcuboot_outdir(self.arguments.outdir, app, board)
+        mcuboot_app = os.path.join(find_mcuboot_root(), 'boot', 'zephyr')
+        gen_options = ['-DBOARD={}'.format(board)]
+        self.cmake_build(mcuboot_app, outdir, gen_options)
 
-    def sign_command(self, board, app, outdir):
+    def build_app(self, app, board):
+        outdir = find_app_outdir(self.arguments.outdir, app, board)
+        gen_options = ['-DBOARD={}'.format(board)]
+        if self.arguments.conf_file:
+            gen_options.append('--DCONF_FILE={}'.format(
+                self.arguments.conf_file))
+        if not self.arguments.no_bootloader:
+            # This uses an undocumented feature, used by sanitycheck,
+            # to mix-in a config fragment that sets
+            # CONFIG_BOOTLOADER_MCUBOOT.
+            gen_options.append('-DOVERLAY_CONFIG={}'.format(
+                shlex.quote(os.path.join(find_sdk_build_root(),
+                                         'mcuboot-overlay.conf'))))
+
+        self.cmake_build(find_app_root(app), outdir, gen_options)
+
+        if not self.arguments.no_bootloader:
+            self.sign_app(app, board)
+
+    def sign_app(self, app, board):
+        outdir = find_app_outdir(self.arguments.outdir, app, board)
+        cmd_sign = self.sign_command(app, board, outdir)
+        self.check_call(cmd_sign, cwd=outdir)
+        if self.insecure_requested:
+            self.wrn('Warning: used insecure default signing key.',
+                     'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
+
+    def sign_command(self, app, board, outdir):
         bcfg = BuildConfiguration(outdir)
         align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
         vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
@@ -543,7 +560,10 @@ class Configure(Command):
         self.command_env['PATH'] = os.pathsep.join([out_path, path_env_val])
 
     def do_configure(self, board, app, output, source_dir):
-        outdir = find_app_outdir(self.arguments.outdir, app, board, output)
+        if output == 'app':
+            outdir = find_app_outdir(self.arguments.outdir, app, board)
+        else:
+            outdir = find_mcuboot_outdir(self.arguments.outdir, app, board)
         cmd_configure = ['cmake',
                          '--build', shlex.quote(outdir),
                          '--target', self.arguments.configurator]
@@ -611,23 +631,38 @@ class Flash(Command):
         hack_app_env = dict(self.command_env)
 
         for board in self.arguments.boards:
-            mcuboot_outdir = find_app_outdir(outdir, app, board, 'mcuboot')
-            app_outdir = find_app_outdir(outdir, app, board, 'app')
-            cmd_flash_mcuboot = (
-                ['cmake',
-                 '--build', shlex.quote(mcuboot_outdir),
-                 '--target', 'flash'])
-            cmd_flash_app = (
-                ['cmake',
-                 '--build', shlex.quote(app_outdir),
-                 '--target', 'flash'])
+            app_outdir = find_app_outdir(outdir, app, board)
+            bcfg = BuildConfiguration(app_outdir)
 
+            bootloader_mcuboot = bool(bcfg.get('CONFIG_BOOTLOADER_MCUBOOT',
+                                               False))
             if 'mcuboot' in self.arguments.outputs:
-                self.check_call(cmd_flash_mcuboot, cwd=mcuboot_outdir)
+                if bootloader_mcuboot:
+                    mcuboot_outdir = find_mcuboot_outdir(outdir, app, board)
+                    cmd_flash_mcuboot = (
+                        ['cmake',
+                         '--build', shlex.quote(mcuboot_outdir),
+                         '--target', 'flash'])
+
+                    self.check_call(cmd_flash_mcuboot, cwd=mcuboot_outdir)
+                else:
+                    msg = (
+                        'Warning:\n'
+                        '\tFlash of MCUboot requested, but the application is not compiled for MCUboot\n'  # noqa: E501
+                        '\t. Ignoring request; not attempting MCUboot flash. You can run this command\n'  # noqa: E501
+                        '\twith "-o app" to disable this message.')
+                    self.wrn(msg)
 
             if 'app' in self.arguments.outputs:
-                hack_bin = glob.glob(os.path.join(app_outdir, 'zephyr',
-                                                  '*-signed.bin'))[0]
-                hack_app_env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
+                cmd_flash_app = (
+                    ['cmake',
+                     '--build', shlex.quote(app_outdir),
+                     '--target', 'flash'])
+                if bootloader_mcuboot:
+                    # Only override the binary to the signed image if the
+                    # application was built with MCUboot support.
+                    hack_bin = glob.glob(os.path.join(app_outdir, 'zephyr',
+                                                      '*-signed.bin'))[0]
+                    hack_app_env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
                 self.check_call(cmd_flash_app, cwd=app_outdir,
                                 env=hack_app_env)
