@@ -422,7 +422,7 @@ class Build(Command):
         outdir = find_app_outdir(self.arguments.outdir, app, board)
         gen_options = ['-DBOARD={}'.format(board)]
         if self.arguments.conf_file:
-            gen_options.append('--DCONF_FILE={}'.format(
+            gen_options.append('-DCONF_FILE={}'.format(
                 self.arguments.conf_file))
         if not self.arguments.no_bootloader:
             # This uses an undocumented feature, used by sanitycheck,
