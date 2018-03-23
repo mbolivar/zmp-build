@@ -474,9 +474,87 @@ class Build(Command):
 
 
 #
-# Configure
+# Clean, Pristine
 #
 
+class CleanPristine:
+    '''Mix-in class for clean and pristine target support'''
+
+    def __init__(self, *args, **kwargs):
+        target = kwargs.get('target')
+        if target is None:
+            raise ValueError('no target given')
+        self.target = target
+        del kwargs['target']
+        super(CleanPristine, self).__init__(*args, **kwargs)
+
+    @property
+    def command_name(self):
+        return self.target
+
+    @property
+    def command_help(self):
+        return 'run build system {} target'.format(self.target)
+
+    def do_register(self, parser):
+        # Common arguments.
+        parser.add_argument('-b', '--board', dest='boards', default=[],
+                            action='append', help=HELP['--board'])
+        parser.add_argument('-O', '--outdir', default=find_default_outdir(),
+                            help=HELP['--outdir'])
+        parser.add_argument('app', nargs='+', help=HELP['app'])
+        parser.add_argument('-o', '--outputs', choices=BUILD_OUTPUTS + ['all'],
+                            default='all',
+                            help=HELP['--outputs'].format('build'))
+
+    def do_prep_for_run(self):
+        check_boards(self.arguments.boards)
+        check_dependencies(['cmake'])
+
+    def do_invoke(self):
+        outdir = self.arguments.outdir
+        for app in self.arguments.app:
+            app = app.rstrip(os.path.sep)
+            for board in self.arguments.boards:
+                if 'mcuboot' in self.arguments.outputs:
+                    outdir = find_mcuboot_outdir(outdir, app, board)
+                    self.cmake_clean(outdir)
+                if 'app' in self.arguments.outputs:
+                    outdir = find_app_outdir(self.arguments.outdir, app, board)
+                    self.cmake_clean(outdir)
+
+    def cmake_clean(self, outdir):
+        if not os.path.isdir(outdir):
+            raise RuntimeError('build directory {} does not exist'.format(
+                outdir))
+        elif 'build.ninja' not in os.listdir(outdir):
+            raise RuntimeError('no build system in {}; cannot run {}'.format(
+                outdir, self.target))
+
+        cmd_clean = (['cmake',
+                      '--build', shlex.quote(outdir),
+                      '--',
+                      shlex.quote(self.target)])
+        self.check_call(cmd_clean, cwd=outdir)
+
+
+class Clean(CleanPristine, Command):
+
+    def __init__(self, *args, **kwargs):
+        kwargs['target'] = 'clean'
+        super(Clean, self).__init__(*args, **kwargs)
+
+
+class Pristine(CleanPristine, Command):
+
+    def __init__(self, *args, **kwargs):
+        kwargs['target'] = 'pristine'
+        super(Pristine, self).__init__(*args, **kwargs)
+
+
+#
+# Configure
+#
 
 class Configure(Command):
 
