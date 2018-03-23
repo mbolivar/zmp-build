@@ -198,10 +198,35 @@ def commit_area(commit):
 def upstream_area_message(area, commits):
     '''Given an area and its commits, get mergeup commit text.'''
     return '\n'.join(
-        ['{}:'.format(area),
+        ['{} ({}):'.format(area, len(commits)),
          ''] +
         list(upstream_commit_line(c) for c in commits) +
         [''])
+
+
+def areas_summary(area_commits):
+    '''Get mergeup commit text summary for all areas.'''
+    def area_patch_str_len(area):
+        return len(str(area_commits[area]))
+
+    pad = 4
+    area_fill = len(max(area_commits, key=len)) + pad
+    patch_fill = len(max(area_commits, key=area_patch_str_len))
+
+    ret = [
+        'Area summary ({} patches total):'.format(
+            sum(len(v) for _, v in area_commits.items())),
+        '',
+        '{} Patches'.format('Area'.ljust(area_fill)),
+        '{} -------'.format('-' * (area_fill - pad) + ' ' * pad),
+    ]
+    for area, patches in area_commits.items():
+        ret.append('{} {}'.format(
+            area.ljust(area_fill),
+            str(len(area_commits[area])).rjust(patch_fill)))
+    ret.append('')
+
+    return ret
 
 
 def dump_unknown_commit_help(unknown_commits):
@@ -294,6 +319,7 @@ def mergeup_highlights_changes(upstream_commits, sha_to_area):
          'Upstream Changes',
          '================',
          ''] +
+        areas_summary(area_commits) +
         [area_logs[area] for area in sorted(area_logs)])
 
     return '\n'.join(message_lines)
