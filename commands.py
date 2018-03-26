@@ -756,8 +756,23 @@ class Flash(Command):
                 if bootloader_mcuboot:
                     # Only override the binary to the signed image if the
                     # application was built with MCUboot support.
-                    hack_bin = glob.glob(os.path.join(app_outdir, 'zephyr',
-                                                      '*-signed.bin'))[0]
-                    hack_app_env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
+                    self._set_hack_app_env(hack_app_env, app_outdir)
                 self.check_call(cmd_flash_app, cwd=app_outdir,
                                 env=hack_app_env)
+
+    def _set_hack_app_env(self, env, outdir):
+        '''Temporary hack for overriding application binaries to flash.'''
+        signed_files = glob.glob(os.path.join(outdir, 'zephyr', '*-signed.*'))
+        hack_bin = self._file_by_ext(signed_files, '.bin')
+        hack_hex = self._file_by_ext(signed_files, '.hex')
+        if hack_bin is not None:
+            env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
+        if hack_hex is not None:
+            env['ZEPHYR_HACK_OVERRIDE_HEX'] = hack_hex
+
+    def _file_by_ext(self, files, ext):
+        for f in files:
+            f_ext = os.path.splitext(f)[1]
+            if ext == f_ext:
+                return f
+        return None
