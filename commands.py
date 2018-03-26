@@ -431,21 +431,46 @@ class Build(Command):
 
     def sign_app(self, app, board):
         outdir = find_app_outdir(self.arguments.outdir, app, board)
-        cmd_sign = self.sign_command(app, board, outdir)
-        self.check_call(cmd_sign, cwd=outdir)
+        for cmd_sign in self.sign_commands(app, board, outdir):
+            self.check_call(cmd_sign, cwd=outdir)
         if self.insecure_requested:
             self.wrn('Warning: used insecure default signing key.',
                      'IMAGES ARE NOT SUITABLE FOR PRODUCTION USE.')
 
-    def sign_command(self, app, board, outdir):
+    def sign_commands(self, app, board, outdir):
+        ret = []
+
         bcfg = BuildConfiguration(outdir)
         align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
         vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
-        unsigned_bin = os.path.join(outdir, 'zephyr', 'zephyr.bin')
-        app_base = os.path.basename(app)
-        app_bin_name = '{}-{}-signed.bin'.format(app_base, board)
-        signed_bin = os.path.join(outdir, 'zephyr', app_bin_name)
         version = self.arguments.imgtool_version
+        if self.arguments.imgtool_pad:
+            pad = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
+        else:
+            pad = None
+
+        app_base = os.path.basename(app)
+        app_fmt = '{}-{}-signed.{}'
+
+        # Always produce a signed binary.
+        unsigned_bin = os.path.join(outdir, 'zephyr', 'zephyr.bin')
+        app_bin_name = app_fmt.format(app_base, board, 'bin')
+        signed_bin = os.path.join(outdir, 'zephyr', app_bin_name)
+        ret.append(self.sign_command(align, vtoff, version, unsigned_bin,
+                                     signed_bin, pad))
+
+        # If there's a .hex file, sign that too. (Some Zephyr runners
+        # can only flash hex files, e.g. the nrfjprog runner).
+        unsigned_hex = os.path.join(outdir, 'zephyr', 'zephyr.hex')
+        if os.path.isfile(unsigned_hex):
+            app_hex_name = app_fmt.format(app_base, board, 'hex')
+            signed_hex = os.path.join(outdir, 'zephyr', app_hex_name)
+            ret.append(self.sign_command(align, vtoff, version, unsigned_hex,
+                                         signed_hex, pad))
+
+        return ret
+
+    def sign_command(self, align, vtoff, version, infile, outfile, pad=None):
         cmd = ['/usr/bin/env', 'python3',
                os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
                'sign',
@@ -454,11 +479,11 @@ class Build(Command):
                '--header-size', vtoff,
                '--included-header',
                '--version', shlex.quote(version),
-               shlex.quote(unsigned_bin),
-               shlex.quote(signed_bin)]
-        if self.arguments.imgtool_pad:
-            pad = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
+               shlex.quote(infile),
+               shlex.quote(outfile)]
+        if pad is not None:
             cmd.extend(['--pad', pad])
+
         return cmd
 
     def version_is_semver(self, version):
