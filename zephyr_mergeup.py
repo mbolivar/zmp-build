@@ -60,7 +60,8 @@ AREA_TO_SHORTLOG_RES = [
     ('External', ['ext(/.*)?', 'hal', 'stm32cube']),
     ('Storage', ['fs', 'disks?', 'fcb']),
     ('Firmware Update', ['dfu', 'mgmt']),
-    ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q']),
+    ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q',
+                 'init.h']),
     ('Libraries', ['libc?', 'json', 'ring_buffer']),
     ('Maintainers', ['CODEOWNERS([.]rst)?']),
     ('Miscellaneous', ['misc', 'release', 'shell', 'printk', 'version']),
@@ -524,6 +525,7 @@ def _self_test():
         ('Kernel',
          ('work_q: Correctly clear pending flag in delayed work queue, '
           'update docs')),
+        ('Kernel', 'init.h: Fix english in comment'),
         ('Libraries',
          'libc: some architectures do not require baremetal libc'),
         ('Libraries', 'lib: move ring_buffer from misc/ to lib/'),
