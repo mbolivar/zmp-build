@@ -67,7 +67,8 @@ AREA_TO_SHORTLOG_RES = [
     ('Miscellaneous', ['misc', 'release', 'shell', 'printk', 'version']),
     ('Networking', ['net(/.*)?', 'openthread', 'slip']),
     ('Samples', ['samples?(/.*)?']),
-    ('Scripts', ['scripts?(/.*)?', 'runner']),
+    ('Scripts', ['scripts?(/.*)?', 'runner', 'gen_syscalls.py',
+                 'gen_syscall_header.py']),
     ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
     ]
 
@@ -553,6 +554,8 @@ def _self_test():
          'Use 4-spaces tabs instead of 2-space tabs in devicetree.py'),
         ('Scripts',
          'script/dts: Remove unnecessary empty return on functions'),
+        ('Scripts', 'gen_syscalls.py: fix include issue'),
+        ('Scripts', 'gen_syscall_header.py: fix include issue'),
         ('Testing', 'tests: use cmake to build object benchmarks'),
         ('Testing',
          'tests: mem_pool: ' +
