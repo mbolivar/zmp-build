@@ -283,6 +283,12 @@ class Build(Command):
         parser.add_argument('-c', '--conf-file',
                             help='''If given, sets app (not mcuboot)
                                  configuration file(s)''')
+        parser.add_argument('--oc', '--overlay-config', dest='overlay_config',
+                            action='append', default=[],
+                            help='''Additional config (.conf) file to overlay
+                            onto the main application config files (which are
+                            specified with --conf-file); may be given
+                            multiple times to specify multiple files.''')
         parser.add_argument('-z', '--zephyr-toolchain-variant',
                             default=ZEPHYR_TOOLCHAIN_VARIANT_DEFAULT,
                             help='''Toolchain variant used by Zephyr
@@ -413,16 +419,19 @@ class Build(Command):
     def build_app(self, app, board):
         outdir = find_app_outdir(self.arguments.outdir, app, board)
         gen_options = ['-DBOARD={}'.format(board)] + self.toolchain_args()
+        overlay_config = self.arguments.overlay_config
+
         if self.arguments.conf_file:
             gen_options.append('-DCONF_FILE={}'.format(
                 self.arguments.conf_file))
+
         if not self.arguments.no_bootloader:
-            # This uses an undocumented feature, used by sanitycheck,
-            # to mix-in a config fragment that sets
-            # CONFIG_BOOTLOADER_MCUBOOT.
+            overlay_config.append(os.path.join(find_sdk_build_root(),
+                                               'mcuboot-overlay.conf'))
+
+        if overlay_config:
             gen_options.append('-DOVERLAY_CONFIG={}'.format(
-                shlex.quote(os.path.join(find_sdk_build_root(),
-                                         'mcuboot-overlay.conf'))))
+                shlex.quote(';'.join(overlay_config))))
 
         self.cmake_build(find_app_root(app), outdir, gen_options)
 
