@@ -211,6 +211,7 @@ def areas_summary(area_commits):
     '''Get mergeup commit text summary for all areas.'''
     def area_patch_str_len(area):
         return len(str(area_commits[area]))
+    areas_sorted = sorted(area_commits)
 
     pad = 4
     area_fill = len(max(area_commits, key=len)) + pad
@@ -223,10 +224,11 @@ def areas_summary(area_commits):
         '{} Patches'.format('Area'.ljust(area_fill)),
         '{} -------'.format('-' * (area_fill - pad) + ' ' * pad),
     ]
-    for area, patches in area_commits.items():
+    for area in areas_sorted:
+        patches = area_commits[area]
         ret.append('{} {}'.format(
             area.ljust(area_fill),
-            str(len(area_commits[area])).rjust(patch_fill)))
+            str(len(patches)).rjust(patch_fill)))
     ret.append('')
 
     return ret
