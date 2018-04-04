@@ -65,7 +65,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Miscellaneous', ['misc', 'release', 'shell', 'printk', 'version']),
     ('Networking', ['net(/.*)?', 'openthread', 'slip']),
     ('Samples', ['samples?(/.*)?']),
-    ('Scripts', ['scripts?', 'runner']),
+    ('Scripts', ['scripts?(/.*)?', 'runner']),
     ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
     ]
 
@@ -543,6 +543,11 @@ def _self_test():
          'scripts: runner: nrfjprog: remove BOARD environment requirement'),
         ('Scripts', "scripts: jlink: Don't reset after load"),
         ('Scripts', 'runner: nrfjprog: Improve error messages'),
+        ('Scripts',
+         'scripts/dts: '
+         'Use 4-spaces tabs instead of 2-space tabs in devicetree.py'),
+        ('Scripts',
+         'script/dts: Remove unnecessary empty return on functions'),
         ('Testing', 'tests: use cmake to build object benchmarks'),
         ('Testing',
          'tests: mem_pool: ' +
