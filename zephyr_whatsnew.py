@@ -2,12 +2,15 @@
 
 # Copyright 2018 Open Source Foundries, Limited
 
-'''Zephyr mergeup helper.
+'''Zephyr "what's new"? script.
 
-This is a helper script for dealing with upstream merges. It looks at
-upstream changes that are not present in another tree, and automates
-some of the bookkeeping related to creating mergeup commits for those
-changes.
+This is a helper script for understanding what's happened in Zephyr
+since a particular point in time. It looks at changes in an "upstream"
+Zephyr tree that are not present in an OSF tree, and outputs
+information on the differences between them.
+
+This information is useful for general understanding, for creating OSF
+mergeup commit messages, etc.
 '''
 
 import argparse
