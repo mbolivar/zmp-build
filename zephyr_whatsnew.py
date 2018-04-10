@@ -70,7 +70,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Networking', ['net(/.*)?', 'openthread', 'slip']),
     ('Samples', ['samples?(/.*)?']),
     ('Scripts', ['scripts?(/.*)?', 'runner', 'gen_syscalls.py',
-                 'gen_syscall_header.py']),
+                 'gen_syscall_header.py', 'kconfiglib']),
     ('Storage', ['fs', 'disks?', 'fcb']),
     ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
     ]
@@ -596,6 +596,7 @@ def _self_test():
          'script/dts: Remove unnecessary empty return on functions'),
         ('Scripts', 'gen_syscalls.py: fix include issue'),
         ('Scripts', 'gen_syscall_header.py: fix include issue'),
+        ('Scripts', 'kconfiglib: Update to 2259d353426f1'),
         ('Testing', 'tests: use cmake to build object benchmarks'),
         ('Testing',
          'tests: mem_pool: ' +
