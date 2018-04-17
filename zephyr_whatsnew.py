@@ -447,8 +447,8 @@ class ZephyrTextFormatter(ZephyrOutputFormatter):
             area_logs[area] = self._upstream_area_message(area, patches)
 
         return (
-            ['Upstream Changes',
-             '================',
+            ['Individual Changes',
+             '==================',
              ''] +
             self._areas_summary(analysis) +
             [area_logs[area] for area in sorted(area_logs)])
