@@ -26,7 +26,7 @@ import editdistance
 
 from pygit2_helpers import shortlog_is_revert, shortlog_reverts_what, \
     shortlog_no_sauce, commit_shortsha, commit_shortlog, \
-    commit_is_osf, upstream_commit_line
+    commit_is_osf
 
 # This list maps the 'area' a commit affects to a list of
 # shortlog prefixes (the content before the first ':') in the Zephyr
@@ -370,9 +370,10 @@ class ZephyrTextFormatter(ZephyrOutputFormatter):
         return ['txt', 'text/plain']
 
     def get_output(self, analysis):
-        return self._do_get_output(analysis, include_osf_outstanding=True)
+        return self.do_get_output(analysis, include_osf_outstanding=True)
 
-    def _do_get_output(self, analysis, include_osf_outstanding=True):
+    def do_get_output(self, analysis, include_osf_outstanding=True):
+        '''Convenient hook for subclasses to use.'''
         highlights = self._highlights(analysis)
         individual_changes = self._individual_changes(analysis)
         if include_osf_outstanding:
@@ -380,6 +381,11 @@ class ZephyrTextFormatter(ZephyrOutputFormatter):
         else:
             osf_outstanding = []
         return '\n'.join(highlights + individual_changes + osf_outstanding)
+
+    def upstream_commit_line(self, commit):
+        '''Get a line about the given upstream commit.'''
+        return '- {} {}'.format(commit_shortsha(commit),
+                                commit_shortlog(commit))
 
     def _highlights(self, analysis):
         '''Create a mergeup commit log message template.
@@ -417,7 +423,7 @@ class ZephyrTextFormatter(ZephyrOutputFormatter):
         return '\n'.join(
             ['{} ({}):'.format(area, len(commits)),
              ''] +
-            list(upstream_commit_line(c) for c in commits) +
+            list(self.upstream_commit_line(c) for c in commits) +
             [''])
 
     def _areas_summary(self, analysis):
@@ -500,7 +506,8 @@ def dump_unknown_commit_help(unknown_commits):
           file=sys.stderr)
     print(file=sys.stderr)
     for c in unknown_commits:
-        print(upstream_commit_line(c), file=sys.stderr)
+        print('- {} {}'.format(commit_shortsha(c), commit_shortlog(c)),
+              file=sys.stderr)
     print(file=sys.stderr)
     print('You can manually specify areas like so:', file=sys.stderr)
     print(file=sys.stderr)

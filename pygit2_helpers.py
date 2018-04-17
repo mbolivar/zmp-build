@@ -57,8 +57,3 @@ def commit_shortlog(commit):
 def commit_is_osf(commit):
     '''Returns True iff the commit is from an OSF email.'''
     return commit.author.email.endswith('@opensourcefoundries.com')
-
-
-def upstream_commit_line(commit):
-    '''Get a line for a mergeup commit message about the given commit.'''
-    return '- {} {}'.format(commit_shortsha(commit), commit_shortlog(commit))
