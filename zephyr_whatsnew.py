@@ -13,6 +13,7 @@ This information is useful for general understanding, for creating OSF
 mergeup commit messages, etc.
 '''
 
+import abc
 import argparse
 from collections import defaultdict, OrderedDict, namedtuple
 import os
@@ -330,43 +331,175 @@ class ZephyrRepoAnalyzer:
 # Output formatting
 #
 
-def upstream_area_message(area, commits):
-    '''Given an area and its commits, get mergeup commit text.'''
-    return '\n'.join(
-        ['{} ({}):'.format(area, len(commits)),
-         ''] +
-        list(upstream_commit_line(c) for c in commits) +
-        [''])
+class ZephyrOutputFormatter(abc.ABC):
+    '''Abstract base class for output formatters.'''
+
+    @classmethod
+    @abc.abstractmethod
+    def names(cls):
+        '''Name(s) of the output format'''
+
+    @classmethod
+    def get_by_name(cls, name):
+        '''Get an output formatter class by format name.'''
+        for sub_cls in ZephyrOutputFormatter.__subclasses__():
+            names = sub_cls.names()
+            if isinstance(names, str):
+                if name == names:
+                    return sub_cls
+            else:
+                if name in names:
+                    return sub_cls
+        raise ValueError('no output formatter for {}'.format(name))
+
+    @abc.abstractmethod
+    def get_output(self, repo_analysis):
+        '''Get formatted output from a repo analysis.
+
+        For now, this must be print()able.'''
 
 
-def areas_summary(analysis):
-    '''Get mergeup commit text summary for all areas.'''
-    area_counts = analysis.upstream_area_counts
-    total = sum(area_counts.values())
+class ZephyrTextFormatter(ZephyrOutputFormatter):
+    '''Plain text output formatter, for mergeup commit messages.
 
-    def area_count_str_len(area):
-        count = area_counts[area]
-        return len(str(count))
-    areas_sorted = sorted(area_counts)
+    This includes a summary of OSF outstanding patches, and may
+    print warnings if there are likely reverted OSF commits'''
 
-    pad = 4
-    area_fill = len(max(area_counts, key=len)) + pad
-    patch_fill = len(max(area_counts, key=area_count_str_len))
+    @classmethod
+    def names(cls):
+        return ['txt', 'text/plain']
 
-    ret = [
-        'Area summary ({} patches total):'.format(total),
-        '',
-        '{} Patches'.format('Area'.ljust(area_fill)),
-        '{} -------'.format('-' * (area_fill - pad) + ' ' * pad),
-    ]
-    for area in areas_sorted:
-        patch_count = area_counts[area]
-        ret.append('{} {}'.format(
-            area.ljust(area_fill),
-            str(patch_count).rjust(patch_fill)))
-    ret.append('')
+    def get_output(self, analysis):
+        return self._do_get_output(analysis, include_osf_outstanding=True)
 
-    return ret
+    def _do_get_output(self, analysis, include_osf_outstanding=True):
+        highlights = self._highlights(analysis)
+        individual_changes = self._individual_changes(analysis)
+        if include_osf_outstanding:
+            osf_outstanding = self._osf_outstanding(analysis)
+        else:
+            osf_outstanding = []
+        return '\n'.join(highlights + individual_changes + osf_outstanding)
+
+    def _highlights(self, analysis):
+        '''Create a mergeup commit log message template.
+
+        Groups the iterable of upstream commits by area, dumping a message
+        and exiting if any are unknown. Otherwise, returns a highlights
+        template followed by the commit shortlogs grouped by area.
+
+        The sha_to_area dict maps SHA prefixes to commit areas, and
+        overrides the guesses otherwise made by this routine from the
+        shortlog.
+        '''
+        return [
+            'Highlights',
+            '==========',
+            '',
+            'Important Changes',
+            '-----------------',
+            '',
+            '<Important changes, like API breaks, go here>',
+            '',
+            'Features',
+            '--------',
+            '',
+            '<New features go here>',
+            '',
+            'Bug Fixes',
+            '---------',
+            '',
+            '<Notable fixes or notes on large groups of fixes go here>',
+            '']
+
+    def _upstream_area_message(self, area, commits):
+        '''Given an area and its commits, get mergeup commit text.'''
+        return '\n'.join(
+            ['{} ({}):'.format(area, len(commits)),
+             ''] +
+            list(upstream_commit_line(c) for c in commits) +
+            [''])
+
+    def _areas_summary(self, analysis):
+        '''Get mergeup commit text summary for all areas.'''
+        area_counts = analysis.upstream_area_counts
+        total = sum(area_counts.values())
+
+        def area_count_str_len(area):
+            count = area_counts[area]
+            return len(str(count))
+        areas_sorted = sorted(area_counts)
+
+        pad = 4
+        area_fill = len(max(area_counts, key=len)) + pad
+        patch_fill = len(max(area_counts, key=area_count_str_len))
+
+        ret = [
+            'Area summary ({} patches total):'.format(total),
+            '',
+            '{} Patches'.format('Area'.ljust(area_fill)),
+            '{} -------'.format('-' * (area_fill - pad) + ' ' * pad),
+        ]
+        for area in areas_sorted:
+            patch_count = area_counts[area]
+            ret.append('{} {}'.format(
+                area.ljust(area_fill),
+                str(patch_count).rjust(patch_fill)))
+        ret.append('')
+
+        return ret
+
+    def _individual_changes(self, analysis):
+        area_logs = {}
+        for area, patches in analysis.upstream_area_patches.items():
+            area_logs[area] = self._upstream_area_message(area, patches)
+
+        return (
+            ['Upstream Changes',
+             '================',
+             ''] +
+            self._areas_summary(analysis) +
+            [area_logs[area] for area in sorted(area_logs)])
+
+    def _osf_outstanding(self, analysis):
+        outstanding = analysis.osf_outstanding_patches
+        likely_merged = analysis.osf_merged_patches
+        ret = []
+
+        def addl(line, comment=False):
+            if comment:
+                if line:
+                    ret.append('# {}'.format(line))
+                else:
+                    ret.append('#')
+            else:
+                ret.append(line)
+
+        addl('Outstanding OSF patches')
+        addl('=======================')
+        addl('')
+        for sl, c in outstanding.items():
+            addl('- {} {}'.format(commit_shortsha(c), sl))
+        addl('')
+
+        if not likely_merged:
+            return ret
+
+        addl('Likely merged OSF patches:', True)
+        addl('IMPORTANT: You probably need to revert these and re-run!', True)
+        addl('           Make sure to check the above as well; these are',
+             True)
+        addl("           guesses that aren't always right.", True)
+        addl('', True)
+        for sl, commits in likely_merged.items():
+            addl('- "{}", likely merged as one of:'.format(sl), True)
+            for c in commits:
+                addl('\t- {} {}'.format(commit_shortsha(c),
+                                        commit_shortlog(c)),
+                     True)
+            addl('', True)
+
+        return ret
 
 
 def dump_unknown_commit_help(unknown_commits):
@@ -395,89 +528,6 @@ def dump_unknown_commit_help(unknown_commits):
     print(file=sys.stderr)
 
 
-def mergeup_highlights_changes(analysis):
-    '''Create a mergeup commit log message template.
-
-    Groups the iterable of upstream commits by area, dumping a message
-    and exiting if any are unknown. Otherwise, returns a highlights
-    template followed by the commit shortlogs grouped by area.
-
-    The sha_to_area dict maps SHA prefixes to commit areas, and
-    overrides the guesses otherwise made by this routine from the
-    shortlog.
-    '''
-    area_logs = {}
-    for area, patches in analysis.upstream_area_patches.items():
-        area_logs[area] = upstream_area_message(area, patches)
-
-    message_lines = (
-        ['Highlights',
-         '==========',
-         '',
-         'Important Changes',
-         '-----------------',
-         '',
-         '<Important changes, like API breaks, go here>',
-         '',
-         'Features',
-         '--------',
-         '',
-         '<New features go here>',
-         '',
-         'Bug Fixes',
-         '---------',
-         '',
-         '<Notable fixes or notes on large groups of fixes go here>',
-         '',
-         'Upstream Changes',
-         '================',
-         ''] +
-        areas_summary(analysis) +
-        [area_logs[area] for area in sorted(area_logs)])
-
-    return '\n'.join(message_lines)
-
-
-def mergeup_outstanding_summary(analysis):
-    outstanding = analysis.osf_outstanding_patches
-    likely_merged = analysis.osf_merged_patches
-    ret = []
-
-    def addl(line, comment=False):
-        if comment:
-            if line:
-                ret.append('# {}'.format(line))
-            else:
-                ret.append('#')
-        else:
-            ret.append(line)
-
-    addl('Outstanding OSF patches')
-    addl('=======================')
-    addl('')
-    for sl, c in outstanding.items():
-        addl('- {} {}'.format(commit_shortsha(c), sl))
-    addl('')
-
-    if not likely_merged:
-        return '\n'.join(ret)
-
-    addl('Likely merged OSF patches:', True)
-    addl('IMPORTANT: You probably need to revert these and re-run!', True)
-    addl('           Make sure to check the above as well; these are', True)
-    addl("           guesses that aren't always right.", True)
-    addl('', True)
-    for sl, commits in likely_merged.items():
-        addl('- "{}", likely merged as one of:'.format(sl), True)
-        for c in commits:
-            addl('\t- {} {}'.format(commit_shortsha(c),
-                                    commit_shortlog(c)),
-                 True)
-        addl('', True)
-
-    return '\n'.join(ret)
-
-
 def main(args):
     repo_path = args.repo
     if repo_path is None:
@@ -491,10 +541,16 @@ def main(args):
         dump_unknown_commit_help(e.args)
         sys.exit(1)
 
-    highlights_changes = mergeup_highlights_changes(analysis)
-    outstanding_summary = mergeup_outstanding_summary(analysis)
-    print(highlights_changes)
-    print(outstanding_summary)
+    try:
+        formatter_cls = ZephyrOutputFormatter.get_by_name(args.format)
+    except ValueError as e:
+        # TODO add some logic to print the choices
+        print('Error:', '\n'.join(e.args), file=sys.stderr)
+        sys.exit(1)
+
+    formatter = formatter_cls()
+    output = formatter.get_output(analysis)
+    print(output)
 
 
 def _self_test():
@@ -647,6 +703,8 @@ if __name__ == '__main__':
     parser.add_argument('-A', '--set-area', default=[], action='append',
                         help='''Format is sha:Area; associates an area with
                         a commit SHA. Use --areas to print all areas.''')
+    parser.add_argument('-f', '--format', default='txt',
+                        help='''Output format, default is txt (plain text).''')
     parser.add_argument('--self-test', action='store_true',
                         help='Perform an internal self-test, and exit.')
     parser.add_argument('repo', nargs='?',
