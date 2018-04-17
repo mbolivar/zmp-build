@@ -359,18 +359,9 @@ class ZephyrOutputFormatter(abc.ABC):
         For now, this must be print()able.'''
 
 
-class ZephyrTextFormatter(ZephyrOutputFormatter):
-    '''Plain text output formatter, for mergeup commit messages.
-
-    This includes a summary of OSF outstanding patches, and may
-    print warnings if there are likely reverted OSF commits'''
-
-    @classmethod
-    def names(cls):
-        return ['txt', 'text/plain']
-
-    def get_output(self, analysis):
-        return self.do_get_output(analysis, include_osf_outstanding=True)
+class ZephyrTextFormatMixin:
+    '''Plain text output formatter mix-in class.
+    '''
 
     def do_get_output(self, analysis, include_osf_outstanding=True):
         '''Convenient hook for subclasses to use.'''
@@ -498,6 +489,20 @@ class ZephyrTextFormatter(ZephyrOutputFormatter):
             addl('', True)
 
         return ret
+
+
+class ZephyrTextFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
+    '''Plain text, for mergeup commit messages.
+
+    This includes a summary of OSF outstanding patches, and may
+    print warnings if there are likely reverted OSF commits'''
+
+    @classmethod
+    def names(cls):
+        return ['txt', 'text/plain']
+
+    def get_output(self, analysis):
+        return self.do_get_output(analysis, include_osf_outstanding=True)
 
 
 def dump_unknown_commit_help(unknown_commits):
