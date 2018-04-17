@@ -505,6 +505,28 @@ class ZephyrTextFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
         return self.do_get_output(analysis, include_osf_outstanding=True)
 
 
+class ZephyrMarkdownFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
+    '''Markdown, for blog posts.
+
+    This doesn't include a summary of outstanding OSF commits.'''
+
+    @classmethod
+    def names(cls):
+        return ['md', 'text/markdown']
+
+    def get_output(self, analysis):
+        return self.do_get_output(analysis, include_osf_outstanding=False)
+
+    def upstream_commit_line(self, commit):
+        '''Get a line about the given upstream commit.'''
+        full_oid = str(commit.oid)
+        link = ('https://github.com/zephyrproject-rtos/zephyr/commit/' +
+                full_oid)
+        return '- [{}]({}) {}'.format(commit_shortsha(commit),
+                                      link,
+                                      commit_shortlog(commit))
+
+
 def dump_unknown_commit_help(unknown_commits):
     print("Error: can't build mergeup log message.",
           'The following commits have unknown areas:',
