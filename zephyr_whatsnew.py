@@ -729,8 +729,9 @@ if __name__ == '__main__':
     parser.add_argument('-A', '--set-area', default=[], action='append',
                         help='''Format is sha:Area; associates an area with
                         a commit SHA. Use --areas to print all areas.''')
-    parser.add_argument('-f', '--format', default='txt',
-                        help='''Output format, default is txt (plain text).''')
+    parser.add_argument('-f', '--format', default='md',
+                        help='''Output format, default is md
+                        (text/markdown).''')
     parser.add_argument('--self-test', action='store_true',
                         help='Perform an internal self-test, and exit.')
     parser.add_argument('repo', nargs='?',
