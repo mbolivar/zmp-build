@@ -430,21 +430,13 @@ class ZephyrTextFormatter(ZephyrOutputFormatter):
             return len(str(count))
         areas_sorted = sorted(area_counts)
 
-        pad = 4
-        area_fill = len(max(area_counts, key=len)) + pad
-        patch_fill = len(max(area_counts, key=area_count_str_len))
-
         ret = [
-            'Area summary ({} patches total):'.format(total),
+            'Patches by area ({} patches total):'.format(total),
             '',
-            '{} Patches'.format('Area'.ljust(area_fill)),
-            '{} -------'.format('-' * (area_fill - pad) + ' ' * pad),
         ]
         for area in areas_sorted:
             patch_count = area_counts[area]
-            ret.append('{} {}'.format(
-                area.ljust(area_fill),
-                str(patch_count).rjust(patch_fill)))
+            ret.append('- {}: {}'.format(area, patch_count))
         ret.append('')
 
         return ret
