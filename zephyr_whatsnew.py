@@ -14,7 +14,7 @@ mergeup commit messages, etc.
 '''
 
 import argparse
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, namedtuple
 import os
 import re
 from subprocess import check_output
@@ -91,64 +91,21 @@ SHORTLOG_RE_TO_AREA = [(re.compile(k, flags=re.IGNORECASE), v) for k, v in
 AREAS = [a for a, _ in AREA_TO_SHORTLOG_RES]
 
 
+#
+# Repository analysis
+#
+
 class InvalidRepositoryError(RuntimeError):
     pass
 
 
-def repo_mergeup_commits(repo_path, osf_ref, upstream_ref):
-    if repo_path is None:
-        repo_path = os.getcwd()
+class UnknownCommitsError(RuntimeError):
+    '''Commits with unknown areas are present.
 
-    try:
-        repo = pygit2.Repository(repo_path)
-    except KeyError:
-        # pygit2 raises KeyError when the current path is not a Git
-        # repository.
-        msg = "Can't initialize Git repository at {}".format(repo_path)
-        raise InvalidRepositoryError(msg)
-
-    osf_oid = repo.revparse_single(osf_ref).oid
-    upstream_oid = repo.revparse_single(upstream_ref).oid
-
-    merge_base = repo.merge_base(osf_oid, upstream_oid)
-
-    sort = pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE
-    walker = repo.walk(upstream_oid, sort)
-    walker.hide(merge_base)
-
-    return [c for c in walker]
-
-
-def repo_osf_commits(repo_path, osf_ref, upstream_ref):
-    '''Commits reachable in repo_path from osf_ref, but not upstream_ref.'''
-    # Note: pygit2 doesn't seem to have any ready-made rev-list
-    # equivalent, so call out to git directly to get the commit SHAs,
-    # then wrap them with pygit2 objects.
-    #
-    # TODO: reimplement in pure pygit2.
-    if repo_path is None:
-        repo_path = os.getcwd()
-
-    try:
-        repo = pygit2.Repository(repo_path)
-    except KeyError:
-        # pygit2 raises KeyError when the current path is not a Git
-        # repository.
-        msg = "Can't initialize Git repository at {}".format(repo_path)
-        raise InvalidRepositoryError(msg)
-
-    cmd = ['git', 'rev-list', '--pretty=oneline', '--reverse',
-           osf_ref, '^{}'.format(upstream_ref)]
-    output_raw = check_output(cmd, cwd=repo_path)
-    output = output_raw.decode(sys.getdefaultencoding()).splitlines()
-
-    ret = []
-    for line in output:
-        sha, _ = line.split(' ', 1)
-        commit = repo.revparse_single(sha)
-        ret.append(commit)
-
-    return ret
+    The exception arguments are an iterable of commits whose area
+    was unknown.
+    '''
+    pass
 
 
 def shortlog_area_prefix(shortlog):
@@ -201,6 +158,178 @@ def commit_area(commit):
     return shortlog_area(commit_shortlog(commit))
 
 
+# ZephyrRepoAnalysis: represents results of analyzing Zephyr and OSF
+# activity in a repository from given starting points. See
+# ZephyrRepoAnalyzer.
+#
+# - upstream_area_counts: map from areas to total number of
+#   new upstream patches (new means not reachable from `osf_ref`)
+#
+# - upstream_area_patches: map from areas to chronological (most
+#   recent first) list of new upstream patches
+#
+# - osf_outstanding_patches: chronological list of OSF patches that don't
+#   appear to have been reverted yet.
+#
+# - osf_merged_patches: "likely merged" OSF patches; a map from
+#   shortlogs of unreverted OSF patches to lists of new upstream
+#   patches sent by OSF contributors that have similar shortlogs.
+ZephyrRepoAnalysis = namedtuple('ZephyrRepoAnalysis',
+                                ['upstream_area_counts',
+                                 'upstream_area_patches',
+                                 'osf_outstanding_patches',
+                                 'osf_merged_patches'])
+
+
+class ZephyrRepoAnalyzer:
+    '''Utility class for analyzing a Zephyr repository.'''
+
+    def __init__(self, repo_path, osf_ref, upstream_ref, sha_to_area=None,
+                 edit_dist_threshold=3):
+        if sha_to_area is None:
+            sha_to_area = {}
+
+        self.sha_to_area = sha_to_area
+        '''map from Zephyr SHAs to known areas, when they can't be guessed'''
+
+        self.repo_path = repo_path
+        '''path to Zephyr repository being analyzed'''
+
+        self.osf_ref = osf_ref
+        '''ref (commit-ish) for OSF commit to start analysis from'''
+
+        self.upstream_ref = upstream_ref
+        '''ref (commit-ish) for upstream ref to start analysis from'''
+
+        self.edit_dist_threshold = edit_dist_threshold
+        '''commit shortlog edit distance to match up OSF patches'''
+
+    def analyze(self):
+        '''Analyze repository history.
+
+        If this returns without raising an exception, the return value
+        is a ZephyrRepoAnalysis.
+        '''
+        try:
+            self.repo = pygit2.Repository(self.repo_path)
+        except KeyError:
+            # pygit2 raises KeyError when the current path is not a Git
+            # repository.
+            msg = "Can't initialize Git repository at {}"
+            raise InvalidRepositoryError(msg.format(self.repo_path))
+
+        #
+        # Group all upstream commits by area, and collect patch counts.
+        #
+        upstream_new = self._new_upstream_only_commits()
+        upstream_area_patches = defaultdict(list)
+        for c in upstream_new:
+            area = self._check_known_area(c) or commit_area(c)
+            upstream_area_patches[area].append(c)
+
+        unknown_area = upstream_area_patches.get(None)
+        if unknown_area:
+            raise UnknownCommitsError(*unknown_area)
+
+        upstream_area_counts = {}
+        for area, patches in upstream_area_patches.items():
+            upstream_area_counts[area] = len(patches)
+
+        #
+        # Analyze OSF portion of the tree.
+        #
+        osf_only = self._all_osf_only_commits()
+        osf_outstanding = OrderedDict()
+        for c in osf_only:
+            if len(c.parents) > 1:
+                # Skip all the mergeup commits.
+                continue
+
+            sl = commit_shortlog(c)
+
+            if shortlog_is_revert(sl):
+                # If a shortlog marks a revert, delete the original commit
+                # from outstanding.
+                what = shortlog_reverts_what(sl)
+                if what not in osf_outstanding:
+                    msg = "{} was reverted, but isn't present in OSF history"
+                    raise RuntimeError(msg.format(what))
+                del osf_outstanding[what]
+            else:
+                # Non-revert commits just get appended onto
+                # osf_outstanding, keyed by shortlog to make finding
+                # them later in case they're reverted easier.
+                #
+                # We could try to support this by looking into the entire
+                # revert message to find the "This reverts commit SHA"
+                # text and computing reverts based on oid rather than
+                # shortlog. That'd be more robust, but let's not worry
+                # about it for now.
+                if sl in osf_outstanding:
+                    msg = 'duplicated commit shortlogs ({})'.format(sl)
+                    raise NotImplementedError(msg)
+                osf_outstanding[sl] = c
+
+        # Compute likely merged patches.
+        upstream_osf = [c for c in upstream_new if commit_is_osf(c)]
+        likely_merged = OrderedDict()
+        for osf_sl, osf_c in osf_outstanding.items():
+            def ed(upstream_commit):
+                return editdistance.eval(shortlog_no_sauce(osf_sl),
+                                         commit_shortlog(upstream_commit))
+            matches = [c for c in upstream_osf if
+                       ed(c) < self.edit_dist_threshold]
+            if len(matches) != 0:
+                likely_merged[osf_sl] = matches
+
+        return ZephyrRepoAnalysis(upstream_area_counts,
+                                  upstream_area_patches,
+                                  osf_outstanding,
+                                  likely_merged)
+
+    def _new_upstream_only_commits(self):
+        '''Commits in `upstream_ref` history since merge base with `osf_ref`'''
+        osf_oid = self.repo.revparse_single(self.osf_ref).oid
+        upstream_oid = self.repo.revparse_single(self.upstream_ref).oid
+
+        merge_base = self.repo.merge_base(osf_oid, upstream_oid)
+
+        sort = pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE
+        walker = self.repo.walk(upstream_oid, sort)
+        walker.hide(merge_base)
+
+        return [c for c in walker]
+
+    def _check_known_area(self, commit):
+        sha = str(commit.oid)
+        for k, v in self.sha_to_area.items():
+            if sha.startswith(k):
+                return v
+        return None
+
+    def _all_osf_only_commits(self):
+        '''Commits reachable from `osf_ref`, but not `upstream_ref`'''
+        # Note: pygit2 doesn't seem to have any ready-made rev-list
+        # equivalent, so call out to git directly to get the commit SHAs,
+        # then wrap them with pygit2 objects.
+        cmd = ['git', 'rev-list', '--pretty=oneline', '--reverse',
+               self.osf_ref, '^{}'.format(self.upstream_ref)]
+        output_raw = check_output(cmd, cwd=self.repo_path)
+        output = output_raw.decode(sys.getdefaultencoding()).splitlines()
+
+        ret = []
+        for line in output:
+            sha, _ = line.split(' ', 1)
+            commit = self.repo.revparse_single(sha)
+            ret.append(commit)
+
+        return ret
+
+
+#
+# Output formatting
+#
+
 def upstream_area_message(area, commits):
     '''Given an area and its commits, get mergeup commit text.'''
     return '\n'.join(
@@ -210,28 +339,31 @@ def upstream_area_message(area, commits):
         [''])
 
 
-def areas_summary(area_commits):
+def areas_summary(analysis):
     '''Get mergeup commit text summary for all areas.'''
-    def area_patch_str_len(area):
-        return len(str(area_commits[area]))
-    areas_sorted = sorted(area_commits)
+    area_counts = analysis.upstream_area_counts
+    total = sum(area_counts.values())
+
+    def area_count_str_len(area):
+        count = area_counts[area]
+        return len(str(count))
+    areas_sorted = sorted(area_counts)
 
     pad = 4
-    area_fill = len(max(area_commits, key=len)) + pad
-    patch_fill = len(max(area_commits, key=area_patch_str_len))
+    area_fill = len(max(area_counts, key=len)) + pad
+    patch_fill = len(max(area_counts, key=area_count_str_len))
 
     ret = [
-        'Area summary ({} patches total):'.format(
-            sum(len(v) for _, v in area_commits.items())),
+        'Area summary ({} patches total):'.format(total),
         '',
         '{} Patches'.format('Area'.ljust(area_fill)),
         '{} -------'.format('-' * (area_fill - pad) + ' ' * pad),
     ]
     for area in areas_sorted:
-        patches = area_commits[area]
+        patch_count = area_counts[area]
         ret.append('{} {}'.format(
             area.ljust(area_fill),
-            str(len(patches)).rjust(patch_fill)))
+            str(patch_count).rjust(patch_fill)))
     ret.append('')
 
     return ret
@@ -263,15 +395,7 @@ def dump_unknown_commit_help(unknown_commits):
     print(file=sys.stderr)
 
 
-def check_known_area(commit, sha_to_area):
-    sha = str(commit.oid)
-    for k, v in sha_to_area.items():
-        if sha.startswith(k):
-            return v
-    return None
-
-
-def mergeup_highlights_changes(upstream_commits, sha_to_area):
+def mergeup_highlights_changes(analysis):
     '''Create a mergeup commit log message template.
 
     Groups the iterable of upstream commits by area, dumping a message
@@ -282,29 +406,10 @@ def mergeup_highlights_changes(upstream_commits, sha_to_area):
     overrides the guesses otherwise made by this routine from the
     shortlog.
     '''
-    area_commits = defaultdict(list)
-    for c in upstream_commits:
-        area = check_known_area(c, sha_to_area) or commit_area(c)
-        area_commits[area].append(c)
+    area_logs = {}
+    for area, patches in analysis.upstream_area_patches.items():
+        area_logs[area] = upstream_area_message(area, patches)
 
-    # Map each area to a message about it that should go in the
-    # mergeup commit, keeping track of commits with unknown areas.
-    unknown_area = None
-    area_logs = dict()
-    for area, commits in area_commits.items():
-        if area is None:
-            unknown_area = commits
-            continue
-
-        area_logs[area] = upstream_area_message(area, commits)
-
-    # If any commits weren't be matched to an area, tell the user how
-    # to specify them and exit.
-    if unknown_area:
-        dump_unknown_commit_help(unknown_area)
-        sys.exit(1)
-
-    # Create and return the mergeup commit log message template.
     message_lines = (
         ['Highlights',
          '==========',
@@ -327,89 +432,15 @@ def mergeup_highlights_changes(upstream_commits, sha_to_area):
          'Upstream Changes',
          '================',
          ''] +
-        areas_summary(area_commits) +
+        areas_summary(analysis) +
         [area_logs[area] for area in sorted(area_logs)])
 
     return '\n'.join(message_lines)
 
 
-def mergeup_outstanding_merged(osf_commits, upstream_commits,
-                               edit_dist_threshold=3):
-    '''Compute outstanding and likely merged osf_commits.
-
-    Outstanding patches are commits in osf_commits which do not have a
-    corresponding 'Revert "[OSF xxx] something something' later in the
-    series.
-
-    Likely merged patches are outstanding patches whose shortlog
-    messages (with the OSF sauce tag removed) are within a given edit
-    distance from something present in upstream_commits.
-
-    The osf_commits list should reflect *all* patches in the OSF tree
-    that aren't present upstream, not just the ones since the most
-    recent merge base with upstream. By contrast, upstream_commits
-    should be *just* the upstream patches that are involved in the
-    mergeup.
-
-    A (outstanding, likely_merged) is returned. The first member,
-    outstanding, is an OrderedDict mapping shortlogs (with OSF sauce
-    tag) to commit objects. The second member, likely_merged, is an
-    OrderedDict mapping shortlogs (with OSF sauce tags) that are
-    likely merged upstream (by edit distance threshold) to a list of
-    the upstream commits that are the likely upstream merge commit.
-    '''
-    # Compute outstanding patches.
-    outstanding = OrderedDict()
-    for c in osf_commits:
-        if len(c.parents) > 1:
-            # Skip all the mergeup commits.
-            continue
-
-        sl = commit_shortlog(c)
-
-        if shortlog_is_revert(sl):
-            # If a shortlog marks a revert, delete the original commit
-            # from outstanding.
-            what = shortlog_reverts_what(sl)
-            if what not in outstanding:
-                import pprint
-                pprint.pprint(outstanding)
-
-                msg = "{} was reverted, but isn't present in OSF history"
-                raise RuntimeError(msg.format(what))
-            del outstanding[what]
-        else:
-            # Non-revert commits just get appended onto
-            # outstanding, keyed by shortlog to make finding
-            # them later in case they're reverted easier.
-            #
-            # We could try to support this by looking into the entire
-            # revert message to find the "This reverts commit SHA"
-            # text and computing reverts based on oid rather than
-            # shortlog. That'd be more robust, but let's not worry
-            # about it for now.
-            if sl in outstanding:
-                msg = 'duplicated commit shortlogs ({})'.format(sl)
-                raise NotImplementedError(msg)
-            outstanding[sl] = c
-
-    # Compute likely merged patches.
-    upstream_osf = [c for c in upstream_commits if commit_is_osf(c)]
-    likely_merged = OrderedDict()
-    for osf_sl, osf_c in outstanding.items():
-        def ed(upstream_commit):
-            return editdistance.eval(shortlog_no_sauce(osf_sl),
-                                     commit_shortlog(upstream_commit))
-        matches = [c for c in upstream_osf if ed(c) < edit_dist_threshold]
-        if len(matches) != 0:
-            likely_merged[osf_sl] = matches
-
-    return outstanding, likely_merged
-
-
-def mergeup_outstanding_summary(osf_only, upstream_commits):
-    outstanding, likely_merged = mergeup_outstanding_merged(osf_only,
-                                                            upstream_commits)
+def mergeup_outstanding_summary(analysis):
+    outstanding = analysis.osf_outstanding_patches
+    likely_merged = analysis.osf_merged_patches
     ret = []
 
     def addl(line, comment=False):
@@ -448,16 +479,20 @@ def mergeup_outstanding_summary(osf_only, upstream_commits):
 
 
 def main(args):
-    # Upstream commits since the last mergeup.
-    upstream_commits = repo_mergeup_commits(args.repo, args.osf_ref,
-                                            args.upstream_ref)
-    # OSF commits SINCE ORIGINAL BASELINE COMMIT WITH UPSTREAM.
-    osf_only = repo_osf_commits(args.repo, args.osf_ref, args.upstream_ref)
+    repo_path = args.repo
+    if repo_path is None:
+        repo_path = os.getcwd()
 
-    highlights_changes = mergeup_highlights_changes(upstream_commits,
-                                                    args.sha_to_area)
-    outstanding_summary = mergeup_outstanding_summary(osf_only,
-                                                      upstream_commits)
+    analyzer = ZephyrRepoAnalyzer(repo_path, args.osf_ref, args.upstream_ref,
+                                  args.sha_to_area)
+    try:
+        analysis = analyzer.analyze()
+    except UnknownCommitsError as e:
+        dump_unknown_commit_help(e.args)
+        sys.exit(1)
+
+    highlights_changes = mergeup_highlights_changes(analysis)
+    outstanding_summary = mergeup_outstanding_summary(analysis)
     print(highlights_changes)
     print(outstanding_summary)
 
@@ -602,11 +637,12 @@ if __name__ == '__main__':
                         help='''Print all areas that upstream commits are
                         grouped into in mergeup commit logs, and exit.''')
     parser.add_argument('--osf-ref', default='osf-dev/master',
-                        help='''OSF ref (commit-ish) to compute a mergeup into.
-                        Default is osf-dev/master.''')
+                        help='''OSF ref (commit-ish) to analyze upstream
+                        differences with. Default is osf-dev/master.''')
     parser.add_argument('--upstream-ref', default='upstream/master',
-                        help='''Upstream ref (commit-ish) to compute a mergeup
-                        from.  Default is upstream/master.''')
+                        help='''Upstream ref (commit-ish) whose differences
+                        with osf-ref to analyze. Default is
+                        upstream/master.''')
     parser.add_argument('-A', '--set-area', default=[], action='append',
                         help='''Format is sha:Area; associates an area with
                         a commit SHA. Use --areas to print all areas.''')
