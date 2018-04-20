@@ -61,7 +61,6 @@ AREA_TO_SHORTLOG_RES = [
                  # as drivers
                  'console', 'random', 'storage']),
     ('External', ['ext(/.*)?', 'hal', 'stm32cube']),
-    ('Storage', ['fs', 'disks?', 'fcb']),
     ('Firmware Update', ['dfu', 'mgmt']),
     ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q',
                  'init.h']),
@@ -72,6 +71,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Samples', ['samples?(/.*)?']),
     ('Scripts', ['scripts?(/.*)?', 'runner', 'gen_syscalls.py',
                  'gen_syscall_header.py']),
+    ('Storage', ['fs', 'disks?', 'fcb']),
     ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
     ]
 
