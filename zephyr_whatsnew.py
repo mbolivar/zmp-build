@@ -187,12 +187,15 @@ class ZephyrRepoAnalyzer:
     '''Utility class for analyzing a Zephyr repository.'''
 
     def __init__(self, repo_path, osf_ref, upstream_ref, sha_to_area=None,
-                 edit_dist_threshold=3):
+                 area_by_shortlog=None, edit_dist_threshold=3):
         if sha_to_area is None:
             sha_to_area = {}
 
         self.sha_to_area = sha_to_area
         '''map from Zephyr SHAs to known areas, when they can't be guessed'''
+
+        self.area_by_shortlog = area_by_shortlog
+        '''function from shortlog prefix to area, checked after sha_to_area'''
 
         self.repo_path = repo_path
         '''path to Zephyr repository being analyzed'''
@@ -307,6 +310,9 @@ class ZephyrRepoAnalyzer:
         for k, v in self.sha_to_area.items():
             if sha.startswith(k):
                 return v
+        if self.area_by_shortlog:
+            spfx = shortlog_area_prefix(commit_shortlog(commit))
+            return self.area_by_shortlog(spfx)
         return None
 
     def _all_osf_only_commits(self):
