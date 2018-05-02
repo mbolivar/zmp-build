@@ -179,6 +179,7 @@ def commit_area(commit):
 ZephyrRepoAnalysis = namedtuple('ZephyrRepoAnalysis',
                                 ['upstream_area_counts',
                                  'upstream_area_patches',
+                                 'upstream_commit_range',
                                  'osf_outstanding_patches',
                                  'osf_merged_patches'])
 
@@ -227,6 +228,7 @@ class ZephyrRepoAnalyzer:
         # Group all upstream commits by area, and collect patch counts.
         #
         upstream_new = self._new_upstream_only_commits()
+        upstream_commit_range = (upstream_new[0], upstream_new[-1])
         upstream_area_patches = defaultdict(list)
         for c in upstream_new:
             area = self._check_known_area(c) or commit_area(c)
@@ -289,6 +291,7 @@ class ZephyrRepoAnalyzer:
 
         return ZephyrRepoAnalysis(upstream_area_counts,
                                   upstream_area_patches,
+                                  upstream_commit_range,
                                   osf_outstanding,
                                   likely_merged)
 
