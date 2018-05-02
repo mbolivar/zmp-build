@@ -567,7 +567,8 @@ def main(args):
         repo_path = os.getcwd()
 
     analyzer = ZephyrRepoAnalyzer(repo_path, args.osf_ref, args.upstream_ref,
-                                  args.sha_to_area)
+                                  sha_to_area=args.sha_to_area,
+                                  area_by_shortlog=args.area_by_shortlog)
     try:
         analysis = analyzer.analyze()
     except UnknownCommitsError as e:
@@ -745,6 +746,10 @@ if __name__ == '__main__':
     parser.add_argument('-A', '--set-area', default=[], action='append',
                         help='''Format is sha:Area; associates an area with
                         a commit SHA. Use --areas to print all areas.''')
+    parser.add_argument('-p', '--set-area-prefix', default=[], action='append',
+                        help='''Format is prefix:Area; associates an area prefix
+                        (which must be a literal string for now) to a given
+                        area.''')
     parser.add_argument('-f', '--format', default='md',
                         help='''Output format, default is md
                         (text/markdown).''')
@@ -772,5 +777,17 @@ if __name__ == '__main__':
             sys.exit(1)
         sha_to_area[sha] = area
     args.sha_to_area = sha_to_area
+
+    if args.set_area_prefix:
+        prefix_area_map = {}
+        for pa in args.set_area_prefix:
+            prefix, area = pa.split(':')
+            prefix_area_map[prefix] = area
+
+        def area_by_shortlog(prefix):
+            return prefix_area_map.get(prefix)
+    else:
+        area_by_shortlog = None
+    args.area_by_shortlog = area_by_shortlog
 
     main(args)
