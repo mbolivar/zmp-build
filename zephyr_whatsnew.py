@@ -54,10 +54,11 @@ AREA_TO_SHORTLOG_RES = [
                  'adc', 'aio', 'clock_control', 'counter', 'crc',
                  'device([.]h)?', 'display', 'dma', 'entropy', 'eth',
                  'ethernet',
-                 'flash', 'gpio', 'grove', 'i2c', 'i2s',
-                 'interrupt_controller', 'ipm', 'led_strip', 'led', 'pci',
-                 'pinmux', 'pwm', 'rtc', 'sensors?', 'serial', 'shared_irq',
-                 'spi', 'timer', 'uart', 'usb', 'watchdog',
+                 'flash', 'gpio', 'grove', 'hid', 'i2c', 'i2s',
+                 'interrupt_controller', 'ipm', 'led_strip', 'led', 'netusb',
+                 'pci', 'pinmux', 'pwm', 'rtc', 'sensors?(/.*)?', 'serial',
+                 'shared_irq', 'spi', 'timer', 'uart', 'uart_pipe', 'usb',
+                 'watchdog',
                  # Technically in subsys/ (or parts are), but treated
                  # as drivers
                  'console', 'random', 'storage']),
@@ -627,6 +628,14 @@ def _self_test():
         ('Drivers', 'uart: fixing pin range being too tight for the nrf52840'),
         ('Drivers',
          'device.h: doc: Refactor to keep documentation infront of impl.'),
+        ('Drivers', 'sensors/lsm5dsl: Fix SPI API usage'),
+        ('Drivers',
+         "hid: core: truncated wLength if it doesn't match report descriptor "
+         "size"),
+        ('Drivers',
+         'uart_pipe: re-work the RX function to match the API '
+         'and work with USB.'),
+        ('Drivers', 'netusb: rndis: Add more debugs'),
         ('Documentation', 'doc/dts: Update to reflect new path locations'),
         ('Documentation', 'doc: boards: v2m_beetle: fix conversion to cmake'),
         ('Documentation', 'doxygen: ignore misc/util.h'),
