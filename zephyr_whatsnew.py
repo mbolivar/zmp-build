@@ -399,9 +399,17 @@ class ZephyrTextFormatMixin:
         overrides the guesses otherwise made by this routine from the
         shortlog.
         '''
+        first, last = analysis.upstream_commit_range
         return [
             'Highlights',
             '==========',
+            '',
+            '<Top-level highlights go here>',
+            '',
+            '<Introductory line about Zephyr being between these commits>:',
+            '',
+            self.upstream_commit_line(first),
+            self.upstream_commit_line(last),
             '',
             'Important Changes',
             '-----------------',
