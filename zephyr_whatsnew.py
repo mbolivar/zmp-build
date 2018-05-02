@@ -73,7 +73,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Samples', ['samples?(/.*)?']),
     ('Scripts', ['scripts?(/.*)?', 'runner', 'gen_syscalls.py',
                  'gen_syscall_header.py', 'kconfiglib']),
-    ('Storage', ['fs', 'disks?', 'fcb']),
+    ('Storage', ['fs', 'disks?', 'fcb', 'settings']),
     ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
     ]
 
@@ -688,6 +688,7 @@ def _self_test():
         ('Scripts', 'gen_syscalls.py: fix include issue'),
         ('Scripts', 'gen_syscall_header.py: fix include issue'),
         ('Scripts', 'kconfiglib: Update to 2259d353426f1'),
+        ('Storage', 'subsys: settings: fix fcb back-end initialization'),
         ('Testing', 'tests: use cmake to build object benchmarks'),
         ('Testing',
          'tests: mem_pool: ' +
