@@ -19,10 +19,18 @@ HIGHLIGHTS = ['''highlights
 ----------''',
               '''highlights
 ==========''']
+IMPORTANT_CHANGES = ['''important changes
+-----------------''']
+FEATURES = ['''features
+--------''']
+BUG_FIXES = ['''bug fixes
+---------''']
 UPSTREAM_CHANGES = ['''upstream changes
 ----------------''',
                     '''upstream changes
-================''']
+================''',
+                    '''individual changes
+==================''']
 
 
 def mergeup_commits(repository_path, start_sha, end_sha):
@@ -47,6 +55,8 @@ def mergeup_highlights(commit):
 
 
 def repo_mergeup_highlights(repo, start, end, yaml_indent):
+    section_headers = IMPORTANT_CHANGES + FEATURES + BUG_FIXES
+
     out = StringIO()
 
     mergeups = mergeup_commits(repo, start, end)
@@ -65,17 +75,97 @@ def repo_mergeup_highlights(repo, start, end, yaml_indent):
     wrapper = textwrap.TextWrapper(initial_indent=content_indent,
                                    subsequent_indent=content_indent)
 
+    def is_section_header(paragraph):
+        '''Predicate for detecting sections headers in Highlights'''
+        lower = paragraph.lower()
+        return lower in section_headers
+
+    def is_heading(paragraph):
+        '''Predicate for detecting a highlight's header.
+
+        Treats any non-empty single-line paragraph which ends in
+        a colon as the heading in a highlight message.'''
+        return (paragraph and len(paragraph.splitlines()) == 1 and
+                paragraph.endswith(':'))
+
+    def emit_heading(heading):
+        print('{}- heading: {}'.format(base_indent, heading), file=out)
+        print('{}  summary: |'.format(base_indent), file=out)
+
+    def emit_summary_para(summary):
+        print(wrapper.fill(summary), file=out)
+        print(file=out)
+
+    # Process the highlights using a state machine that uses
+    # heuristics to detect if each section has manually annotated
+    # headings or if those should be left TODO.
+    #
+    # There are two states:
+    #
+    # - seeking_heading: initial state, looking to see if next
+    #   paragraph is an individual highlight's heading or not
+    # - seeking_summary: either the section has headings and we're
+    #   successively emitting summary paragraphs, or the section has no
+    #   headings and we're emitting summary paragraphs one by one
+    #   each with a TODO heading
+    #
+    # This state machine lets us be flexible in whether we
+    # choose to include headers for each item or not. In
+    # Zephyr's features and important changes sections, we do,
+    # in its bug fixes, we don't. Similarly, MCUboot doesn't
+    # have headings in the commit logs either.
     for m, hls in highlights.items():
+        state = 'seeking_heading'
+        have_headings = False
         if not hls:
             missing.append(m)
             continue
         print('# From mergeup {} on {}:'.format(str(m.id)[:7], commit_date(m)),
               file=out)
         for hl in hls:
-            print('{}- heading: TODO'.format(base_indent), file=out)
-            print('{}  summary: |'.format(base_indent), file=out)
-            print(wrapper.fill(hl), file=out)
-            print(file=out)
+            # If we ever discover a section header, include a comment
+            # about it in the output and reset our state machine
+            # (since every section is allowed to have its own style).
+            if is_section_header(hl):
+                section = hl.splitlines()[0]
+                print('# {}:'.format(section), file=out)
+                state = 'seeking_heading'
+                have_headings = False
+            # 'seeking_heading' state transitions:
+            #
+            # - highlight heading: this section has headings; emit this one
+            #   and remember that fact
+            # - otherwise: section doesn't have headers, emit every
+            #   paragraph with a TODO header until next reset
+            elif state == 'seeking_heading':
+                if is_heading(hl):
+                    emit_heading(hl.rstrip(':'))
+                    have_headings = True
+                else:
+                    have_headings = False
+                    emit_heading('TODO')
+                    emit_summary_para(hl)
+                state = 'seeking_summary'
+            # 'seeking_summary' transitions:
+            #
+            # - if there are no headings, print the current highlight
+            #   item as a paragraph with a TODO heading
+            # - if this is a highlight heading: emit it and keep going
+            # - otherwise: this is a summary paragraph, emit it
+            #
+            # Regardless, we are still seeking summary paragraphs.
+            elif state == 'seeking_summary':
+                if not have_headings:
+                    emit_heading('TODO')
+                    emit_summary_para(hl)
+                elif is_heading(hl):
+                    emit_heading(hl.rstrip(':'))
+                else:
+                    emit_summary_para(hl)
+            else:
+                raise RuntimeError("can't happen, invalid state {}".format(
+                    state))
+
     if missing:
         print(file=out)
         print('WARNING: the following mergeup commit(s) had no highlights.',
