@@ -682,28 +682,17 @@ class Flash(Command):
                             help=HELP['--outputs'].format('flash'))
         parser.add_argument('app', help='application to flash')
         # Other:
-        parser.add_argument('-d', '--device-id', dest='device_ids',
+        parser.add_argument('--board-id', dest='board_ids',
                             default=[], action='append',
-                            help='''This command has been temporarily
-                            disabled, and will cause an error if used.''')
-        parser.add_argument('-e', '--extra', default='',
-                            help='''This command has been temporarily
-                            disabled, and will cause an error if used.''')
+                            help='''If given, specifies a --board-id
+                            argument to the underlying flash runner''')
 
     def do_prep_for_run(self):
-        if self.arguments.device_ids and len(self.arguments.boards) > 1:
+        if self.arguments.board_ids and len(self.arguments.boards) > 1:
             raise ValueError('only one board target may be used when '
-                             'specifying device ids')
-
-        if self.arguments.device_ids or self.arguments.extra:
-            # FIXME: try to convert these to use CMake. For now, since
-            # they require passing values at runtime, just disable them.
-            msg = ('--device-id and --extra are temporarily unavailable. '
-                   'They will be restored if possible.')
-            raise NotImplementedError(msg)
+                             'specifying --board-id')
 
         self.runner_core = importlib.import_module('.core', 'west.runner')
-        self.arguments.extra = self.arguments.extra.split()
         self.arguments.app = self.arguments.app.strip(os.path.sep)
 
     def do_invoke(self):
@@ -711,30 +700,42 @@ class Flash(Command):
         app = self.arguments.app
 
         for board in self.arguments.boards:
-            app_outdir = find_app_outdir(outdir, app, board)
-            bcfg = self.runner_core.BuildConfiguration(app_outdir)
+            if self.arguments.board_ids:
+                for board_id in self.arguments.board_ids:
+                    self.west_flash(outdir, app, board, board_id=board_id)
+            else:
+                self.west_flash(outdir, app, board)
 
-            bootloader_mcuboot = bool(bcfg.get('CONFIG_BOOTLOADER_MCUBOOT'))
-            if 'mcuboot' in self.arguments.outputs:
-                if bootloader_mcuboot:
-                    mcuboot_outdir = find_mcuboot_outdir(outdir, app, board)
-                    self.check_west_call(['flash'], cwd=mcuboot_outdir)
-                else:
-                    msg = (
-                        'Warning:\n'
-                        '\tFlash of MCUboot requested, but the application is not compiled for MCUboot\n'  # noqa: E501
-                        '\t. Ignoring request; not attempting MCUboot flash. You can run this command\n'  # noqa: E501
-                        '\twith "-o app" to disable this message.')
-                    self.wrn(msg)
+    def west_flash(self, outdir, app, board, board_id=None):
+        app_outdir = find_app_outdir(outdir, app, board)
+        bcfg = self.runner_core.BuildConfiguration(app_outdir)
 
-            if 'app' in self.arguments.outputs:
-                west_args = ['flash', '--build-dir', app_outdir]
-                if bootloader_mcuboot:
-                    signed_bin = signed_app_name(app, board, app_outdir, 'bin')
-                    signed_hex = signed_app_name(app, board, app_outdir, 'hex')
-                    if os.path.isfile(signed_bin):
-                        west_args.extend(['--dt-flash=y',
-                                          '--kernel-bin', signed_bin])
-                    if os.path.isfile(signed_hex):
-                        west_args.extend(['--kernel-hex', signed_hex])
-                self.check_west_call(west_args)
+        west_args = ['flash']
+        if board_id is not None:
+            west_args.extend(['--board-id', board_id])
+
+        bootloader_mcuboot = bool(bcfg.get('CONFIG_BOOTLOADER_MCUBOOT'))
+        if 'mcuboot' in self.arguments.outputs:
+            if bootloader_mcuboot:
+                mcuboot_outdir = find_mcuboot_outdir(outdir, app, board)
+                args_extra = ['--build-dir', mcuboot_outdir]
+                self.check_west_call(west_args + args_extra)
+            else:
+                msg = (
+                    'Warning:\n'
+                    '\tFlash of MCUboot requested, but the application is not compiled for MCUboot\n'  # noqa: E501
+                    '\t. Ignoring request; not attempting MCUboot flash. You can run this command\n'  # noqa: E501
+                    '\twith "-o app" to disable this message.')
+                self.wrn(msg)
+
+        if 'app' in self.arguments.outputs:
+            args_extra = ['--build-dir', app_outdir]
+            if bootloader_mcuboot:
+                signed_bin = signed_app_name(app, board, app_outdir, 'bin')
+                signed_hex = signed_app_name(app, board, app_outdir, 'hex')
+                if os.path.isfile(signed_bin):
+                    args_extra.extend(['--dt-flash=y',
+                                      '--kernel-bin', signed_bin])
+                if os.path.isfile(signed_hex):
+                    args_extra.extend(['--kernel-hex', signed_hex])
+            self.check_west_call(west_args + args_extra)
