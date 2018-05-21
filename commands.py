@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import abc
-import glob
+import importlib
 import multiprocessing
 import os
 import platform
@@ -63,50 +63,12 @@ HELP = {
 }
 
 
-class BuildConfiguration:
-    '''This helper class provides access to build-time configuration.
-
-    Configuration options can be read as if the object were a dict,
-    either object['CONFIG_FOO'] or object.get('CONFIG_FOO').
-
-    Configuration values in auto.conf and generated_dts_board.conf are
-    available.'''
-
-    def __init__(self, build_dir):
-        self.build_dir = build_dir
-        self.options = {}
-        self._init()
-
-    def __getitem__(self, item):
-        return self.options[item]
-
-    def get(self, option, *args):
-        return self.options.get(option, *args)
-
-    def _init(self):
-        zephyr = os.path.join(self.build_dir, 'zephyr')
-        generated = os.path.join(zephyr, 'include', 'generated')
-        files = [os.path.join(generated, 'generated_dts_board.conf'),
-                 os.path.join(zephyr, '.config')]
-        for f in files:
-            self._parse(f)
-
-    def _parse(self, filename):
-        with open(filename, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                option, value = line.split('=', 1)
-                self.options[option] = self._parse_value(value)
-
-    def _parse_value(self, value):
-        if value.startswith('"') or value.startswith("'"):
-            return value.split()
-        try:
-            return int(value, 0)
-        except ValueError:
-            return value
+def signed_app_name(app, board, app_outdir, ext):
+    app_base = os.path.basename(app)
+    app_fmt = '{}-{}-signed.{}'
+    file_name = app_fmt.format(app_base, board, ext)
+    path = os.path.join(app_outdir, 'zephyr', file_name)
+    return path
 
 
 class Command(abc.ABC):
@@ -188,8 +150,29 @@ class Command(abc.ABC):
 
         The instance variable 'command_env' will be set upon return.
         It will be used when running commands with check_call().'''
+        # Override ZEPHYR_BASE to the microPlatform's tree.
+        zephyr_base = find_zephyr_base()
+        env_val = os.environ.get('ZEPHYR_BASE')
+        if env_val is not None and env_val != zephyr_base:
+            self.wrn('Warning: overriding ZEPHYR_BASE:')
+            self.wrn('\tenvironment value: {}'.format(env_val))
+            self.wrn('\tusing value:       {}'.format(zephyr_base))
+
+        # Ensure we can import the west runner subpackage from the
+        # current ZEPHYR_BASE, either in this script or when invoking
+        # west programmatically.
+        sys.path.append(os.path.join(zephyr_base, 'scripts', 'meta'))
+
+        # For some reason, relative imports of runner submodules on
+        # Python <3.6 fail with errors about west.runner not being
+        # imported without this line.
+        if sys.version_info < (3, 6):
+            importlib.import_module('west.runner')
+
         self.do_prep_for_run()
         command_env = dict(os.environ)
+        command_env['ZEPHYR_BASE'] = zephyr_base
+        self.command_env = command_env
 
         if len(self.arguments.boards) == 0:
             self.arguments.boards = [BOARD_DEFAULT]
@@ -203,18 +186,6 @@ class Command(abc.ABC):
             self.arguments.outputs = BUILD_OUTPUTS
         else:
             self.arguments.outputs = [self.arguments.outputs]
-
-        # Override ZEPHYR_BASE to the microPlatform tree. External
-        # trees might not have the zmP patches.
-        zephyr_base = find_zephyr_base()
-        env_val = command_env.get('ZEPHYR_BASE')
-        if env_val is not None and env_val != zephyr_base:
-            self.wrn('Warning: overriding ZEPHYR_BASE:')
-            self.wrn('\tenvironment value: {}'.format(env_val))
-            self.wrn('\tusing value:       {}'.format(zephyr_base))
-        command_env['ZEPHYR_BASE'] = zephyr_base
-
-        self.command_env = command_env
 
     def invoke(self, arguments):
         '''Invoke the command, with given arguments.'''
@@ -249,6 +220,17 @@ class Command(abc.ABC):
             cmd = self._cmd_to_string(command)
             print('Failed to run command: {}'.format(cmd), file=sys.stderr)
             raise
+
+    def check_west_call(self, args, **kwargs):
+        '''Like check_call, but prepends the path to west as the command.'''
+        # West makes its own assumptions about signal and exception
+        # handling, hence the subprocess wrapper.
+        #
+        # The Windows launcher script west-win.py, when invoked
+        # directly instead of through "py -3", is cross-platform.
+        west = os.path.join(self.command_env['ZEPHYR_BASE'],
+                            'scripts', 'west-win.py')
+        self.check_call([sys.executable, west] + args, **kwargs)
 
 
 #
@@ -359,6 +341,8 @@ class Build(Command):
                 self.insecure_requested = False
             self.arguments.signing_key = os.path.abspath(key)
 
+        self.runner_core = importlib.import_module('.core', 'west.runner')
+
         check_boards(self.arguments.boards)
         check_dependencies(['cmake', 'ninja', 'dtc'])
 
@@ -449,7 +433,7 @@ class Build(Command):
     def sign_commands(self, app, board, outdir):
         ret = []
 
-        bcfg = BuildConfiguration(outdir)
+        bcfg = self.runner_core.BuildConfiguration(outdir)
         align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
         vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
         version = self.arguments.imgtool_version
@@ -458,13 +442,9 @@ class Build(Command):
         else:
             pad = None
 
-        app_base = os.path.basename(app)
-        app_fmt = '{}-{}-signed.{}'
-
         # Always produce a signed binary.
         unsigned_bin = os.path.join(outdir, 'zephyr', 'zephyr.bin')
-        app_bin_name = app_fmt.format(app_base, board, 'bin')
-        signed_bin = os.path.join(outdir, 'zephyr', app_bin_name)
+        signed_bin = signed_app_name(app, board, outdir, 'bin')
         ret.append(self.sign_command(align, vtoff, version, unsigned_bin,
                                      signed_bin, pad))
 
@@ -472,8 +452,7 @@ class Build(Command):
         # can only flash hex files, e.g. the nrfjprog runner).
         unsigned_hex = os.path.join(outdir, 'zephyr', 'zephyr.hex')
         if os.path.isfile(unsigned_hex):
-            app_hex_name = app_fmt.format(app_base, board, 'hex')
-            signed_hex = os.path.join(outdir, 'zephyr', app_hex_name)
+            signed_hex = signed_app_name(app, board, outdir, 'hex')
             ret.append(self.sign_command(align, vtoff, version, unsigned_hex,
                                          signed_hex, pad))
 
@@ -723,32 +702,23 @@ class Flash(Command):
                    'They will be restored if possible.')
             raise NotImplementedError(msg)
 
+        self.runner_core = importlib.import_module('.core', 'west.runner')
         self.arguments.extra = self.arguments.extra.split()
+        self.arguments.app = self.arguments.app.strip(os.path.sep)
 
     def do_invoke(self):
         outdir = self.arguments.outdir
         app = self.arguments.app
 
-        # TEMPHACK: we don't have a good way to pass dynamic
-        # information to CMake targets. Just hack it for now by
-        # passing it through a fresh environment
-        hack_app_env = dict(self.command_env)
-
         for board in self.arguments.boards:
             app_outdir = find_app_outdir(outdir, app, board)
-            bcfg = BuildConfiguration(app_outdir)
+            bcfg = self.runner_core.BuildConfiguration(app_outdir)
 
-            bootloader_mcuboot = bool(bcfg.get('CONFIG_BOOTLOADER_MCUBOOT',
-                                               False))
+            bootloader_mcuboot = bool(bcfg.get('CONFIG_BOOTLOADER_MCUBOOT'))
             if 'mcuboot' in self.arguments.outputs:
                 if bootloader_mcuboot:
                     mcuboot_outdir = find_mcuboot_outdir(outdir, app, board)
-                    cmd_flash_mcuboot = (
-                        ['cmake',
-                         '--build', shlex.quote(mcuboot_outdir),
-                         '--target', 'flash'])
-
-                    self.check_call(cmd_flash_mcuboot, cwd=mcuboot_outdir)
+                    self.check_west_call(['flash'], cwd=mcuboot_outdir)
                 else:
                     msg = (
                         'Warning:\n'
@@ -758,30 +728,13 @@ class Flash(Command):
                     self.wrn(msg)
 
             if 'app' in self.arguments.outputs:
-                cmd_flash_app = (
-                    ['cmake',
-                     '--build', shlex.quote(app_outdir),
-                     '--target', 'flash'])
+                west_args = ['flash', '--build-dir', app_outdir]
                 if bootloader_mcuboot:
-                    # Only override the binary to the signed image if the
-                    # application was built with MCUboot support.
-                    self._set_hack_app_env(hack_app_env, app_outdir)
-                self.check_call(cmd_flash_app, cwd=app_outdir,
-                                env=hack_app_env)
-
-    def _set_hack_app_env(self, env, outdir):
-        '''Temporary hack for overriding application binaries to flash.'''
-        signed_files = glob.glob(os.path.join(outdir, 'zephyr', '*-signed.*'))
-        hack_bin = self._file_by_ext(signed_files, '.bin')
-        hack_hex = self._file_by_ext(signed_files, '.hex')
-        if hack_bin is not None:
-            env['ZEPHYR_HACK_OVERRIDE_BIN'] = hack_bin
-        if hack_hex is not None:
-            env['ZEPHYR_HACK_OVERRIDE_HEX'] = hack_hex
-
-    def _file_by_ext(self, files, ext):
-        for f in files:
-            f_ext = os.path.splitext(f)[1]
-            if ext == f_ext:
-                return f
-        return None
+                    signed_bin = signed_app_name(app, board, app_outdir, 'bin')
+                    signed_hex = signed_app_name(app, board, app_outdir, 'hex')
+                    if os.path.isfile(signed_bin):
+                        west_args.extend(['--dt-flash=y',
+                                          '--kernel-bin', signed_bin])
+                    if os.path.isfile(signed_hex):
+                        west_args.extend(['--kernel-hex', signed_hex])
+                self.check_west_call(west_args)
