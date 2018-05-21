@@ -7,7 +7,6 @@ import abc
 import importlib
 import multiprocessing
 import os
-import platform
 import re
 import shlex
 import subprocess
@@ -31,10 +30,7 @@ BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 BUILD_OUTPUTS = ['app', 'mcuboot']
 
 # Programs which 'configure' can use to generate Zephyr .config files.
-CONFIGURATORS = ['config', 'nconfig', 'menuconfig', 'xconfig', 'gconfig',
-                 'oldconfig', 'silentoldconfig', 'defconfig', 'savedefconfig',
-                 'allnoconfig', 'allyesconfig', 'alldefconfig', 'randconfig',
-                 'listnewconfig', 'olddefconfig']
+CONFIGURATORS = ['menuconfig']
 # menuconfig is portable and the one most examples are based off of.
 CONFIGURATOR_DEFAULT = 'menuconfig'
 
@@ -594,21 +590,6 @@ class Configure(Command):
             help='''Configure front-end (default: {})'''.format(default))
 
     def do_invoke(self):
-        if platform.system() == 'Windows':
-            # The Windows system currently does not support configuration.
-            # Upstream bug reference:
-            # https://github.com/zephyrproject-rtos/zephyr/issues/5847
-            msg = ('Configuration on Windows is currently unsupported.\n'
-                   'This is an upstream Zephyr issue:\n'
-                   'https://github.com/zephyrproject-rtos/zephyr/issues/5847')
-            raise RuntimeError(msg)
-
-        # Prepare the host tools and prepend them to the build
-        # environment path. These are available on Linux via the
-        # Zephyr SDK, but that may not be installed, and is not
-        # helpful on OS X.
-        self.prepare_host_tools()
-
         mcuboot = find_mcuboot_root()
 
         for board in self.arguments.boards:
@@ -616,31 +597,6 @@ class Configure(Command):
             source_dirs = {'app': find_app_root(app), 'mcuboot': mcuboot}
             for output in self.arguments.outputs:
                 self.do_configure(board, app, output, source_dirs[output])
-
-    def prepare_host_tools(self):
-        host_tools = os.path.join(find_zephyr_base(), 'scripts')
-        outdir = os.path.join(self.arguments.outdir, 'zephyr', 'scripts')
-
-        # Ensure the output directory exists.
-        os.makedirs(outdir, exist_ok=True)
-
-        # If cmake has been called successfully to initialize the
-        # output directory, then just rebuild the host
-        # tools. Otherwise, run cmake before building.
-        if 'build.ninja' not in os.listdir(outdir):
-            cmd_generate = (['cmake'] + CMAKE_OPTIONS +
-                            ['-G{}'.format('Ninja'),
-                             shlex.quote(host_tools)])
-            self.check_call(cmd_generate, cwd=outdir)
-        cmd_build = (['cmake',
-                      '--build', shlex.quote(outdir)])
-        self.check_call(cmd_build, cwd=outdir)
-
-        # Monkey-patch the path to add the output directory.
-        # TODO: windows?
-        out_path = os.path.join(outdir, 'kconfig')
-        path_env_val = self.command_env['PATH']
-        self.command_env['PATH'] = os.pathsep.join([out_path, path_env_val])
 
     def do_configure(self, board, app, output, source_dir):
         if output == 'app':
