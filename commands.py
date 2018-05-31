@@ -689,9 +689,11 @@ class Flash(Command):
             if bootloader_mcuboot:
                 signed_bin = signed_app_name(app, board, app_outdir, 'bin')
                 signed_hex = signed_app_name(app, board, app_outdir, 'hex')
-                if os.path.isfile(signed_bin):
-                    args_extra.extend(['--dt-flash=y',
-                                      '--kernel-bin', signed_bin])
+                # Prefer hex to bin. (Some of the runners that take a hex don't
+                # understand --dt-flash for a bin yet).
                 if os.path.isfile(signed_hex):
                     args_extra.extend(['--kernel-hex', signed_hex])
+                elif os.path.isfile(signed_bin):
+                    args_extra.extend(['--dt-flash=y',
+                                      '--kernel-bin', signed_bin])
             self.check_west_call(west_args + args_extra)
