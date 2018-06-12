@@ -433,16 +433,13 @@ class Build(Command):
         align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
         vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
         version = self.arguments.imgtool_version
-        if self.arguments.imgtool_pad:
-            pad = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
-        else:
-            pad = None
+        slot_size = str(bcfg['FLASH_AREA_IMAGE_0_SIZE'])
 
         # Always produce a signed binary.
         unsigned_bin = os.path.join(outdir, 'zephyr', 'zephyr.bin')
         signed_bin = signed_app_name(app, board, outdir, 'bin')
         ret.append(self.sign_command(align, vtoff, version, unsigned_bin,
-                                     signed_bin, pad))
+                                     signed_bin, slot_size))
 
         # If there's a .hex file, sign that too. (Some Zephyr runners
         # can only flash hex files, e.g. the nrfjprog runner).
@@ -450,23 +447,24 @@ class Build(Command):
         if os.path.isfile(unsigned_hex):
             signed_hex = signed_app_name(app, board, outdir, 'hex')
             ret.append(self.sign_command(align, vtoff, version, unsigned_hex,
-                                         signed_hex, pad))
+                                         signed_hex, slot_size))
 
         return ret
 
-    def sign_command(self, align, vtoff, version, infile, outfile, pad=None):
+    def sign_command(self, align, vtoff, version, infile, outfile, slot_size):
         cmd = ['/usr/bin/env', 'python3',
                os.path.join(find_mcuboot_root(), MCUBOOT_IMGTOOL),
                'sign',
                '--key', shlex.quote(self.arguments.signing_key),
                '--align', align,
                '--header-size', vtoff,
+               '--slot-size', slot_size,
                '--included-header',
                '--version', shlex.quote(version),
                shlex.quote(infile),
                shlex.quote(outfile)]
-        if pad is not None:
-            cmd.extend(['--pad', pad])
+        if self.arguments.imgtool_pad:
+            cmd.append('--pad')
 
         return cmd
 
