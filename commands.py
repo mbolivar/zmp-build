@@ -394,6 +394,18 @@ class Build(Command):
             gen_options.extend(['-DDTC_OVERLAY_FILE={}'.format(
                     shlex.quote(app_mcuboot_overlay))])
 
+        # MCUboot requires a key Kconfig option, so we need an overlay
+        # file; the only convenient ways to bake them in from here are
+        # with an explicit -DOVERLAY_CONFIG=xx, or by putting the
+        # setting into the build directory. Since we're generating it
+        # dynamically, we choose the latter option to avoid messing
+        # with the cmake command line.
+        os.makedirs(outdir, exist_ok=True)
+        key_overlay = os.path.join(outdir, 'mcuboot-key-file.conf')
+        with open(key_overlay, 'w') as f:
+            print('CONFIG_BOOT_SIGNATURE_KEY_FILE="{}"'.format(
+                self.arguments.signing_key), file=f)
+
         self.cmake_build(mcuboot_source, outdir, gen_options)
 
     def build_app(self, app, board):
