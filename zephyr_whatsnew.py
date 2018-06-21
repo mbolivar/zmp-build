@@ -16,6 +16,7 @@ mergeup commit messages, etc.
 import abc
 import argparse
 from collections import defaultdict, OrderedDict, namedtuple
+import itertools
 import os
 import re
 from subprocess import check_output
@@ -383,6 +384,10 @@ class ZephyrTextFormatMixin:
             osf_outstanding = []
         return '\n'.join(highlights + individual_changes + osf_outstanding)
 
+    def emph(self, text):
+        '''Emphasizes ``text``.'''
+        return text
+
     def upstream_commit_line(self, commit):
         '''Get a line about the given upstream commit.'''
         return '- {} {}'.format(commit_shortsha(commit),
@@ -400,32 +405,38 @@ class ZephyrTextFormatMixin:
         shortlog.
         '''
         first, last = analysis.upstream_commit_range
-        return [
-            'Highlights',
-            '==========',
-            '',
-            '<Top-level highlights go here>',
-            '',
-            '<Introductory line about Zephyr being between these commits>:',
-            '',
-            self.upstream_commit_line(first),
-            self.upstream_commit_line(last),
-            '',
-            'Important Changes',
-            '-----------------',
-            '',
-            '<Important changes, like API breaks, go here>',
-            '',
-            'Features',
-            '--------',
-            '',
-            '<New features go here>',
-            '',
-            'Bug Fixes',
-            '---------',
-            '',
-            '<Notable fixes or notes on large groups of fixes go here>',
-            '']
+        emph_areas = []
+        for ae in [self.emph(a + ':') for a in AREAS]:
+            emph_areas.extend([ae, ''])
+        return (['Highlights',
+                 '==========',
+                 '',
+                 '<Top-level highlights go here>',
+                 '',
+                 '<Introductory line about Zephyr being between these commits>:',
+                 '',
+                 self.upstream_commit_line(first),
+                 self.upstream_commit_line(last),
+                 '',
+                 'Important Changes',
+                 '-----------------',
+                 '',
+                 '<Important changes, like API breaks, go here>',
+                 '',
+                 'Features',
+                 '--------',
+                 '',
+                 '<New features go here>',
+                 ''] +
+                emph_areas +
+                ['',
+                 'Bug Fixes',
+                 '---------',
+                 '',
+                 '<Notable fixes or notes on large groups of fixes go here>',
+                 ''] +
+                emph_areas +
+                [''])
 
     def _upstream_area_message(self, area, commits):
         '''Given an area and its commits, get mergeup commit text.'''
@@ -543,6 +554,9 @@ class ZephyrMarkdownFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
         return '- [{}]({}) {}'.format(commit_shortsha(commit),
                                       link,
                                       commit_shortlog(commit))
+
+    def emph(self, text):
+        return '**' + text + '**'
 
 
 def dump_unknown_commit_help(unknown_commits):
