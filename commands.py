@@ -41,11 +41,9 @@ MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0+0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 
-# We currently enforce use of Ninja as a generated build system type.
-#
 # The Zephyr CMake boilerplate prints warnings about CMP0000. This clutters
 # up the build; silence it with -Wno-dev.
-CMAKE_OPTIONS = ['-GNinja', '-Wno-dev']
+CMAKE_OPTIONS = ['-Wno-dev']
 
 # Help format strings for options shared by multiple commands.
 HELP = {
@@ -258,6 +256,11 @@ class Build(Command):
                             help=HELP['--outputs'].format('build'))
 
         # Build-specific arguments
+        parser.add_argument('-G', '--generator', default='Ninja',
+                            help='''CMake generator to use; default is Ninja.
+                            Note that you must run 'pristine' between builds
+                            if you're switching build systems, or use different
+                            build directories (e.g. with --outdir).''')
         parser.add_argument('-c', '--conf-file',
                             help='''If given, sets app (not mcuboot)
                                  configuration file(s)''')
@@ -340,7 +343,9 @@ class Build(Command):
         self.runner_core = importlib.import_module('.core', 'west.runner')
 
         check_boards(self.arguments.boards)
-        check_dependencies(['cmake', 'ninja', 'dtc'])
+        check_dependencies(['cmake', 'dtc'])
+        if self.arguments.generator == 'Ninja':
+            check_dependencies(['ninja'])
 
     def do_invoke(self):
         for app in self.arguments.app:
@@ -354,8 +359,10 @@ class Build(Command):
     def cmake_build(self, sourcedir, outdir, gen_options):
         os.makedirs(outdir, exist_ok=True)
 
-        if 'build.ninja' not in os.listdir(outdir):
-            cmd_generate = (['cmake'] + CMAKE_OPTIONS +
+        if 'CMakeFiles' not in os.listdir(outdir):
+            cmd_generate = (['cmake',
+                             '-G{}'.format(self.arguments.generator)] +
+                            CMAKE_OPTIONS +
                             gen_options + [shlex.quote(sourcedir)])
             self.check_call(cmd_generate, cwd=outdir)
 
@@ -538,8 +545,8 @@ class CleanPristine:
         if not os.path.isdir(outdir):
             raise RuntimeError('build directory {} does not exist'.format(
                 outdir))
-        elif 'build.ninja' not in os.listdir(outdir):
-            raise RuntimeError('no build system in {}; cannot run {}'.format(
+        elif 'CMakeFiles' not in os.listdir(outdir):
+            raise RuntimeError('no CMake files in {}; cannot run {}'.format(
                 outdir, self.target))
 
         cmd_clean = (['cmake',
