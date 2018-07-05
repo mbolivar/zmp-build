@@ -478,7 +478,6 @@ class Build(Command):
                '--align', align,
                '--header-size', vtoff,
                '--slot-size', slot_size,
-               '--included-header',
                '--version', shlex.quote(version),
                shlex.quote(infile),
                shlex.quote(outfile)]
