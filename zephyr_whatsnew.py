@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 
 # Copyright 2018 Open Source Foundries, Limited
+# Copyright 2018 Foundries.io, Limited
 
 '''Zephyr "what's new"? script.
 
 This is a helper script for understanding what's happened in Zephyr
 since a particular point in time. It looks at changes in an "upstream"
-Zephyr tree that are not present in an OSF tree, and outputs
+Zephyr tree that are not present in a Foundries.io tree, and outputs
 information on the differences between them.
 
-This information is useful for general understanding, for creating OSF
+This information is useful for general understanding, for creating Foundries.io
 mergeup commit messages, etc.
 '''
 
@@ -27,7 +28,7 @@ import editdistance
 
 from pygit2_helpers import shortlog_is_revert, shortlog_reverts_what, \
     shortlog_no_sauce, commit_shortsha, commit_shortlog, \
-    commit_is_osf
+    commit_is_fio
 
 # This list maps the 'area' a commit affects to a list of
 # shortlog prefixes (the content before the first ':') in the Zephyr
@@ -162,34 +163,34 @@ def commit_area(commit):
     return shortlog_area(commit_shortlog(commit))
 
 
-# ZephyrRepoAnalysis: represents results of analyzing Zephyr and OSF
+# ZephyrRepoAnalysis: represents results of analyzing Zephyr and Foundries.io
 # activity in a repository from given starting points. See
 # ZephyrRepoAnalyzer.
 #
 # - upstream_area_counts: map from areas to total number of
-#   new upstream patches (new means not reachable from `osf_ref`)
+#   new upstream patches (new means not reachable from `fio_ref`)
 #
 # - upstream_area_patches: map from areas to chronological (most
 #   recent first) list of new upstream patches
 #
-# - osf_outstanding_patches: chronological list of OSF patches that don't
-#   appear to have been reverted yet.
+# - fio_outstanding_patches: chronological list of Foundries.io patches that
+#   don't appear to have been reverted yet.
 #
-# - osf_merged_patches: "likely merged" OSF patches; a map from
-#   shortlogs of unreverted OSF patches to lists of new upstream
-#   patches sent by OSF contributors that have similar shortlogs.
+# - fio_merged_patches: "likely merged" Foundries.io patches; a map from
+#   shortlogs of unreverted F.io patches to lists of new upstream
+#   patches sent by F.io contributors that have similar shortlogs.
 ZephyrRepoAnalysis = namedtuple('ZephyrRepoAnalysis',
                                 ['upstream_area_counts',
                                  'upstream_area_patches',
                                  'upstream_commit_range',
-                                 'osf_outstanding_patches',
-                                 'osf_merged_patches'])
+                                 'fio_outstanding_patches',
+                                 'fio_merged_patches'])
 
 
 class ZephyrRepoAnalyzer:
     '''Utility class for analyzing a Zephyr repository.'''
 
-    def __init__(self, repo_path, osf_ref, upstream_ref, sha_to_area=None,
+    def __init__(self, repo_path, fio_ref, upstream_ref, sha_to_area=None,
                  area_by_shortlog=None, edit_dist_threshold=3):
         if sha_to_area is None:
             sha_to_area = {}
@@ -203,14 +204,14 @@ class ZephyrRepoAnalyzer:
         self.repo_path = repo_path
         '''path to Zephyr repository being analyzed'''
 
-        self.osf_ref = osf_ref
-        '''ref (commit-ish) for OSF commit to start analysis from'''
+        self.fio_ref = fio_ref
+        '''ref (commit-ish) for foundries.io commit to start analysis from'''
 
         self.upstream_ref = upstream_ref
         '''ref (commit-ish) for upstream ref to start analysis from'''
 
         self.edit_dist_threshold = edit_dist_threshold
-        '''commit shortlog edit distance to match up OSF patches'''
+        '''commit shortlog edit distance to match up foundries.io patches'''
 
     def analyze(self):
         '''Analyze repository history.
@@ -245,11 +246,11 @@ class ZephyrRepoAnalyzer:
             upstream_area_counts[area] = len(patches)
 
         #
-        # Analyze OSF portion of the tree.
+        # Analyze FIO portion of the tree.
         #
-        osf_only = self._all_osf_only_commits()
-        osf_outstanding = OrderedDict()
-        for c in osf_only:
+        fio_only = self._all_fio_only_commits()
+        fio_outstanding = OrderedDict()
+        for c in fio_only:
             if len(c.parents) > 1:
                 # Skip all the mergeup commits.
                 continue
@@ -260,13 +261,13 @@ class ZephyrRepoAnalyzer:
                 # If a shortlog marks a revert, delete the original commit
                 # from outstanding.
                 what = shortlog_reverts_what(sl)
-                if what not in osf_outstanding:
-                    msg = "{} was reverted, but isn't present in OSF history"
+                if what not in fio_outstanding:
+                    msg = "{} was reverted, but isn't present in FIO history"
                     raise RuntimeError(msg.format(what))
-                del osf_outstanding[what]
+                del fio_outstanding[what]
             else:
                 # Non-revert commits just get appended onto
-                # osf_outstanding, keyed by shortlog to make finding
+                # fio_outstanding, keyed by shortlog to make finding
                 # them later in case they're reverted easier.
                 #
                 # We could try to support this by looking into the entire
@@ -274,35 +275,35 @@ class ZephyrRepoAnalyzer:
                 # text and computing reverts based on oid rather than
                 # shortlog. That'd be more robust, but let's not worry
                 # about it for now.
-                if sl in osf_outstanding:
+                if sl in fio_outstanding:
                     msg = 'duplicated commit shortlogs ({})'.format(sl)
                     raise NotImplementedError(msg)
-                osf_outstanding[sl] = c
+                fio_outstanding[sl] = c
 
         # Compute likely merged patches.
-        upstream_osf = [c for c in upstream_new if commit_is_osf(c)]
+        upstream_fio = [c for c in upstream_new if commit_is_fio(c)]
         likely_merged = OrderedDict()
-        for osf_sl, osf_c in osf_outstanding.items():
+        for fio_sl, fio_c in fio_outstanding.items():
             def ed(upstream_commit):
-                return editdistance.eval(shortlog_no_sauce(osf_sl),
+                return editdistance.eval(shortlog_no_sauce(fio_sl),
                                          commit_shortlog(upstream_commit))
-            matches = [c for c in upstream_osf if
+            matches = [c for c in upstream_fio if
                        ed(c) < self.edit_dist_threshold]
             if len(matches) != 0:
-                likely_merged[osf_sl] = matches
+                likely_merged[fio_sl] = matches
 
         return ZephyrRepoAnalysis(upstream_area_counts,
                                   upstream_area_patches,
                                   upstream_commit_range,
-                                  osf_outstanding,
+                                  fio_outstanding,
                                   likely_merged)
 
     def _new_upstream_only_commits(self):
-        '''Commits in `upstream_ref` history since merge base with `osf_ref`'''
-        osf_oid = self.repo.revparse_single(self.osf_ref).oid
+        '''Commits in `upstream_ref` history since merge base with `fio_ref`'''
+        fio_oid = self.repo.revparse_single(self.fio_ref).oid
         upstream_oid = self.repo.revparse_single(self.upstream_ref).oid
 
-        merge_base = self.repo.merge_base(osf_oid, upstream_oid)
+        merge_base = self.repo.merge_base(fio_oid, upstream_oid)
 
         sort = pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE
         walker = self.repo.walk(upstream_oid, sort)
@@ -320,13 +321,13 @@ class ZephyrRepoAnalyzer:
             return self.area_by_shortlog(spfx)
         return None
 
-    def _all_osf_only_commits(self):
-        '''Commits reachable from `osf_ref`, but not `upstream_ref`'''
+    def _all_fio_only_commits(self):
+        '''Commits reachable from `fio_ref`, but not `upstream_ref`'''
         # Note: pygit2 doesn't seem to have any ready-made rev-list
         # equivalent, so call out to git directly to get the commit SHAs,
         # then wrap them with pygit2 objects.
         cmd = ['git', 'rev-list', '--pretty=oneline', '--reverse',
-               self.osf_ref, '^{}'.format(self.upstream_ref)]
+               self.fio_ref, '^{}'.format(self.upstream_ref)]
         output_raw = check_output(cmd, cwd=self.repo_path)
         output = output_raw.decode(sys.getdefaultencoding()).splitlines()
 
@@ -375,15 +376,15 @@ class ZephyrTextFormatMixin:
     '''Plain text output formatter mix-in class.
     '''
 
-    def do_get_output(self, analysis, include_osf_outstanding=True):
+    def do_get_output(self, analysis, include_fio_outstanding=True):
         '''Convenient hook for subclasses to use.'''
         highlights = self._highlights(analysis)
         individual_changes = self._individual_changes(analysis)
-        if include_osf_outstanding:
-            osf_outstanding = self._osf_outstanding(analysis)
+        if include_fio_outstanding:
+            fio_outstanding = self._fio_outstanding(analysis)
         else:
-            osf_outstanding = []
-        return '\n'.join(highlights + individual_changes + osf_outstanding)
+            fio_outstanding = []
+        return '\n'.join(highlights + individual_changes + fio_outstanding)
 
     def emph(self, text):
         '''Emphasizes ``text``.'''
@@ -480,9 +481,9 @@ class ZephyrTextFormatMixin:
             self._areas_summary(analysis) +
             [area_logs[area] for area in sorted(area_logs)])
 
-    def _osf_outstanding(self, analysis):
-        outstanding = analysis.osf_outstanding_patches
-        likely_merged = analysis.osf_merged_patches
+    def _fio_outstanding(self, analysis):
+        outstanding = analysis.fio_outstanding_patches
+        likely_merged = analysis.fio_merged_patches
         ret = []
 
         def addl(line, comment=False):
@@ -494,8 +495,8 @@ class ZephyrTextFormatMixin:
             else:
                 ret.append(line)
 
-        addl('Outstanding OSF patches')
-        addl('=======================')
+        addl('Outstanding Foundries.io patches')
+        addl('================================')
         addl('')
         for sl, c in outstanding.items():
             addl('- {} {}'.format(commit_shortsha(c), sl))
@@ -504,7 +505,7 @@ class ZephyrTextFormatMixin:
         if not likely_merged:
             return ret
 
-        addl('Likely merged OSF patches:', True)
+        addl('Likely merged Foundries.io patches:', True)
         addl('IMPORTANT: You probably need to revert these and re-run!', True)
         addl('           Make sure to check the above as well; these are',
              True)
@@ -524,28 +525,28 @@ class ZephyrTextFormatMixin:
 class ZephyrTextFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
     '''Plain text, for mergeup commit messages.
 
-    This includes a summary of OSF outstanding patches, and may
-    print warnings if there are likely reverted OSF commits'''
+    This includes a summary of foundries.io outstanding patches, and may
+    print warnings if there are likely reverted foundries.io commits'''
 
     @classmethod
     def names(cls):
         return ['txt', 'text/plain']
 
     def get_output(self, analysis):
-        return self.do_get_output(analysis, include_osf_outstanding=True)
+        return self.do_get_output(analysis, include_fio_outstanding=True)
 
 
 class ZephyrMarkdownFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
     '''Markdown, for blog posts.
 
-    This doesn't include a summary of outstanding OSF commits.'''
+    This doesn't include a summary of outstanding foundries.io commits.'''
 
     @classmethod
     def names(cls):
         return ['md', 'text/markdown']
 
     def get_output(self, analysis):
-        return self.do_get_output(analysis, include_osf_outstanding=False)
+        return self.do_get_output(analysis, include_fio_outstanding=False)
 
     def upstream_commit_line(self, commit):
         '''Get a line about the given upstream commit.'''
@@ -592,7 +593,7 @@ def main(args):
     if repo_path is None:
         repo_path = os.getcwd()
 
-    analyzer = ZephyrRepoAnalyzer(repo_path, args.osf_ref, args.upstream_ref,
+    analyzer = ZephyrRepoAnalyzer(repo_path, args.fio_ref, args.upstream_ref,
                                   sha_to_area=args.sha_to_area,
                                   area_by_shortlog=args.area_by_shortlog)
     try:
@@ -778,12 +779,13 @@ if __name__ == '__main__':
     parser.add_argument('--areas', action='store_true',
                         help='''Print all areas that upstream commits are
                         grouped into in mergeup commit logs, and exit.''')
-    parser.add_argument('--osf-ref', default='osf-dev/master',
-                        help='''OSF ref (commit-ish) to analyze upstream
-                        differences with. Default is osf-dev/master.''')
+    parser.add_argument('--fio-ref', default='osf-dev/master',
+                        help='''foundries.io ref (commit-ish) to analyze
+                        upstream differences with. Default is osf-dev/master
+                        [sic; this is a legacy from the OSF days].''')
     parser.add_argument('--upstream-ref', default='upstream/master',
                         help='''Upstream ref (commit-ish) whose differences
-                        with osf-ref to analyze. Default is
+                        with fio-ref to analyze. Default is
                         upstream/master.''')
     parser.add_argument('-A', '--set-area', default=[], action='append',
                         help='''Format is sha:Area; associates an area with

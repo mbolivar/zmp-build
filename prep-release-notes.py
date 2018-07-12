@@ -14,7 +14,7 @@ from pygit2_helpers import repo_commits, \
     commit_date, commit_shortsha, commit_shortlog
 
 DEFAULT_INDENT = 12
-MERGEUP_SAUCE_TAGS = ['LTD mergeup', 'OSF mergeup']
+MERGEUP_SAUCE_TAGS = ['LTD mergeup', 'OSF mergeup', 'FIO mergeup']
 HIGHLIGHTS = ['''highlights
 ----------''',
               '''highlights

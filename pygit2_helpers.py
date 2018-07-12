@@ -31,7 +31,7 @@ def shortlog_reverts_what(shortlog):
 
 
 def shortlog_no_sauce(shortlog):
-    if shortlog.startswith('[OSF'):
+    if shortlog.startswith(('[OSF', '[FIO')):
         return shortlog[shortlog.find(']')+1:].strip()
     else:
         return shortlog
@@ -54,6 +54,7 @@ def commit_shortlog(commit):
     return commit.message.splitlines()[0]
 
 
-def commit_is_osf(commit):
-    '''Returns True iff the commit is from an OSF email.'''
-    return commit.author.email.endswith('@opensourcefoundries.com')
+def commit_is_fio(commit):
+    '''Returns True iff the commit is from an OSF/foundries.io email.'''
+    email = commit.author.email
+    return email.endswith(('@opensourcefoundries.com', '@foundries.io'))
