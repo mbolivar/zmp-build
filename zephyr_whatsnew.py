@@ -69,6 +69,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Kernel',  ['kernel(/.*)?', 'poll', 'mempool', 'syscalls', 'work_q',
                  'init.h', 'userspace', 'k_queue', 'k_poll']),
     ('Libraries', ['libc?', 'json', 'ring_buffer', 'lib(/.*)']),
+    ('Logging', ['logging']),
     ('Maintainers', ['CODEOWNERS([.]rst)?']),
     ('Miscellaneous', ['misc', 'release', 'shell', 'printk', 'version']),
     ('Networking', ['net(/.*)?', 'openthread', 'slip']),
@@ -711,6 +712,7 @@ def _self_test():
         ('Libraries', 'ring_buffer: remove broken object_tracing support'),
         ('Libraries', 'lib/rbtree: Fix crash condition with empty trees and rb_min/max()'),  # noqa: E501
         ('Libraries', 'lib/posix: Port wait_q usage to new API'),
+        ('Logging', 'logging: Add internal thread for log processing'),
         ('Maintainers', 'CODEOWNERS: misc updates'),
         ('Maintainers', 'CODEOWNERS.rst: misc updates'),
         ('Miscellaneous',
