@@ -17,7 +17,6 @@ mergeup commit messages, etc.
 import abc
 import argparse
 from collections import defaultdict, OrderedDict, namedtuple
-import itertools
 import os
 import re
 from subprocess import check_output
@@ -60,8 +59,8 @@ AREA_TO_SHORTLOG_RES = [
                  'flash', 'gpio', 'grove', 'hid', 'i2c', 'i2s',
                  'interrupt_controller', 'ipm', 'led_strip', 'led', 'netusb',
                  'pci', 'pinmux', 'pwm', 'rtc', 'sensors?(/.*)?', 'serial',
-                 'shared_irq', 'spi', 'timer', 'uart', 'uart_pipe', 'usb(/.*)?',
-                 'watchdog',
+                 'shared_irq', 'spi', 'timer', 'uart', 'uart_pipe',
+                 'usb(/.*)?', 'watchdog',
                  # Technically in subsys/ (or parts are), but treated
                  # as drivers
                  'console', 'random', 'storage']),
@@ -415,7 +414,7 @@ class ZephyrTextFormatMixin:
                  '',
                  '<Top-level highlights go here>',
                  '',
-                 '<Introductory line about Zephyr being between these commits>:',
+                 '<Introductory line about Zephyr between these commits>:',
                  '',
                  self.upstream_commit_line(first),
                  self.upstream_commit_line(last),
@@ -639,7 +638,7 @@ def _self_test():
         ('Build', 'clang/llvm: add initial configuration file for clang'),
         ('Build', 'genrest: Mention implicit default values'),
         ('Build',
-         'isr_tables: Simplify how the spurious irq function address is found'),
+         'isr_tables: Simplify how the spurious irq function address is found'),  # noqa: E501
         ('Build', 'menuconfig: Fix searching for nonexistent objects'),
         ('Continuous Integration', 'sanitycheck: Flush stdout in info()'),
         ('Continuous Integration', 'ci: verify author identity'),
@@ -710,7 +709,7 @@ def _self_test():
          'libc: some architectures do not require baremetal libc'),
         ('Libraries', 'lib: move ring_buffer from misc/ to lib/'),
         ('Libraries', 'ring_buffer: remove broken object_tracing support'),
-        ('Libraries', 'lib/rbtree: Fix crash condition with empty trees and rb_min/max()'),
+        ('Libraries', 'lib/rbtree: Fix crash condition with empty trees and rb_min/max()'),  # noqa: E501
         ('Libraries', 'lib/posix: Port wait_q usage to new API'),
         ('Maintainers', 'CODEOWNERS: misc updates'),
         ('Maintainers', 'CODEOWNERS.rst: misc updates'),
