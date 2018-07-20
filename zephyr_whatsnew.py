@@ -46,7 +46,7 @@ AREA_TO_SHORTLOG_RES = [
     ('Boards', ['boards?(/.*)?']),
     ('Build', ['build', 'clang(/.*)?', 'cmake', 'kconfig', 'gen_isr_tables?',
                'gen_syscall_header', 'genrest', 'isr_tables?',
-               'ld', 'linker', 'menuconfig', 'size_report', 'toolchain']),
+               'ld', 'linker', 'menuconfig', 'size_report', 'toolchains?']),
     ('Continuous Integration', ['ci', 'coverage', 'sanitycheck', 'gitlint']),
     ('Cryptography', ['crypto', 'mbedtls']),
     ('Device Tree', ['dt', 'dts(/.*)?', 'dt-bindings',
@@ -641,6 +641,7 @@ def _self_test():
         ('Build',
          'isr_tables: Simplify how the spurious irq function address is found'),  # noqa: E501
         ('Build', 'menuconfig: Fix searching for nonexistent objects'),
+        ('Build', 'toolchains: add xtools support for ARC'),
         ('Continuous Integration', 'sanitycheck: Flush stdout in info()'),
         ('Continuous Integration', 'ci: verify author identity'),
         ('Continuous Integration',
