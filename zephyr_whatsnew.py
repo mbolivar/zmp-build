@@ -40,8 +40,9 @@ from pygit2_helpers import shortlog_is_revert, shortlog_reverts_what, \
 # Keep its definition sorted alphabetically by key.
 AREA_TO_SHORTLOG_RES = [
     ('Arches', ['arch(/.*)?', 'arc(/.*)?', 'arm(/.*)?', 'esp32(/.*)?',
-                'native(/.*)?', 'nios2(/.*)?', 'posix(/.*)?', 'lpc(/.*)?',
-                'riscv32(/.*)?', 'soc(/.*)?', 'x86(/.*)?', 'xtensa(/.*)?']),
+                'native(/.*)?', 'native_posix', 'nios2(/.*)?', 'posix(/.*)?',
+                'lpc(/.*)?', 'riscv32(/.*)?', 'soc(/.*)?', 'x86(/.*)?',
+                'xtensa(/.*)?']),
     ('Bluetooth', ['bluetooth', 'bt']),
     ('Boards', ['boards?(/.*)?']),
     ('Build', ['build', 'clang(/.*)?', 'cmake', 'kconfig', 'gen_isr_tables?',
@@ -626,6 +627,7 @@ def _self_test():
         ('Arches',
          'xtensa/asm2: Add a _new_thread implementation for asm2/switch'),
         ('Arches', 'esp32: Set CPU pointer on app cpu at startup'),
+        ('Arches', 'native_posix: Be more precise with stop-at'),
         ('Bluetooth', 'Bluetooth: Mesh: Fix typo in Kconfig help message'),
         ('Bluetooth',
          'bt: hci driver over spi: BlueNRG-MS read until IRQ pin goes low'),
