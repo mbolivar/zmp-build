@@ -21,6 +21,7 @@ import os
 import re
 from subprocess import check_output
 import sys
+import time
 
 import pygit2
 import editdistance
@@ -391,10 +392,20 @@ class ZephyrTextFormatMixin:
         '''Emphasizes ``text``.'''
         return text
 
-    def upstream_commit_line(self, commit):
+    def upstream_commit_line(self, commit, merge_day=False):
         '''Get a line about the given upstream commit.'''
-        return '- {} {}'.format(commit_shortsha(commit),
-                                commit_shortlog(commit))
+        if merge_day:
+            merged = self.commit_merge_day(commit)
+            return '- {} {}, merged {}'.format(commit_shortsha(commit),
+                                               commit_shortlog(commit),
+                                               merged)
+        else:
+            return '- {} {}'.format(commit_shortsha(commit),
+                                    commit_shortlog(commit))
+
+    def commit_merge_day(self, commit):
+        '''Get a locale-specific day the commit was merged.'''
+        return time.strftime('%-d %B %Y', time.localtime(commit.commit_time))
 
     def _highlights(self, analysis):
         '''Create a mergeup commit log message template.
@@ -418,8 +429,8 @@ class ZephyrTextFormatMixin:
                  '',
                  '<Introductory line about Zephyr between these commits>:',
                  '',
-                 self.upstream_commit_line(first),
-                 self.upstream_commit_line(last),
+                 self.upstream_commit_line(first, merge_day=True),
+                 self.upstream_commit_line(last, merge_day=True),
                  '',
                  'Important Changes',
                  '-----------------',
@@ -549,14 +560,21 @@ class ZephyrMarkdownFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
     def get_output(self, analysis):
         return self.do_get_output(analysis, include_fio_outstanding=False)
 
-    def upstream_commit_line(self, commit):
+    def upstream_commit_line(self, commit, merge_day=False):
         '''Get a line about the given upstream commit.'''
         full_oid = str(commit.oid)
         link = ('https://github.com/zephyrproject-rtos/zephyr/commit/' +
                 full_oid)
-        return '- [{}]({}) {}'.format(commit_shortsha(commit),
-                                      link,
-                                      commit_shortlog(commit))
+        if merge_day:
+            merged = self.commit_merge_day(commit)
+            return '- [{}]({}) {}, merged {}'.format(commit_shortsha(commit),
+                                                     link,
+                                                     commit_shortlog(commit),
+                                                     merged)
+        else:
+            return '- [{}]({}) {}'.format(commit_shortsha(commit),
+                                          link,
+                                          commit_shortlog(commit))
 
     def emph(self, text):
         return '**' + text + '**'
