@@ -41,9 +41,8 @@ MCUBOOT_IMGTOOL_VERSION_DEFAULT = '0.0.0+0'
 # imgtool.py state. This post-processes binaries for chain-loading by mcuboot.
 MCUBOOT_IMGTOOL = os.path.join('scripts', 'imgtool.py')
 
-# The Zephyr CMake boilerplate prints warnings about CMP0000. This clutters
-# up the build; silence it with -Wno-dev.
-CMAKE_OPTIONS = ['-Wno-dev']
+# Any globally desirable CMake options can be added here.
+CMAKE_OPTIONS = []
 
 # Help format strings for options shared by multiple commands.
 HELP = {
