@@ -21,7 +21,7 @@ from core import find_default_outdir, find_zephyr_base, \
 
 # Default values shared by multiple commands.
 BOARD_DEFAULT = 'nrf52_blenano2'
-ZEPHYR_TOOLCHAIN_VARIANT_DEFAULT = 'gccarmemb'
+ZEPHYR_TOOLCHAIN_VARIANT_DEFAULT = 'gnuarmemb'
 BUILD_PARALLEL_DEFAULT = multiprocessing.cpu_count()
 
 # What types of build outputs to produce.
@@ -278,7 +278,7 @@ class Build(Command):
                             choices=['yes', 'no', 'y', 'n'],
                             help='''Whether to use a pre-built toolchain
                                  provided with ZMP, if one exists (default:
-                                 'yes'). Currently, only a pre-built GCC ARM
+                                 'yes'). Currently, only a pre-built GNU ARM
                                  Embedded toolchain is provided. Set to 'no' to
                                  prevent overriding the toolchain's location in
                                  the calling environment.''')
@@ -376,10 +376,10 @@ class Build(Command):
             return []
 
         toolchain_variant = self.arguments.zephyr_toolchain_variant
-        if toolchain_variant == 'gccarmemb':
+        if toolchain_variant == 'gnuarmemb':
             return [
-                '-DZEPHYR_TOOLCHAIN_VARIANT=gccarmemb',
-                '-DGCCARMEMB_TOOLCHAIN_PATH={}'.format(
+                '-DZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb',
+                '-DGNUARMEMB_TOOLCHAIN_PATH={}'.format(
                     shlex.quote(find_arm_none_eabi_gcc()))]
         else:
             raise NotImplementedError(
