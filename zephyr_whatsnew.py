@@ -17,7 +17,10 @@ mergeup commit messages, etc.
 import abc
 import argparse
 from collections import defaultdict, OrderedDict, namedtuple
+from datetime import date
+from itertools import chain
 import os
+import platform
 import re
 from subprocess import check_output
 import sys
@@ -97,6 +100,21 @@ SHORTLOG_RE_TO_AREA = [(re.compile(k, flags=re.IGNORECASE), v) for k, v in
 
 
 AREAS = [a for a, _ in AREA_TO_SHORTLOG_RES]
+
+
+#
+# Helpers
+#
+
+def get_user_full_name():
+    '''Get logged-in user's full name from process context and system.'''
+    # Currently Linux-only.
+    if platform.system() != 'Linux':
+        raise NotImplementedError()
+    getent_cmd = ['getent', 'passwd', os.environ['USER']]
+    gecos_field = check_output(getent_cmd).split(b':')[4]
+    name = gecos_field.split(b',', 1)[0]
+    return name.decode(sys.getdefaultencoding())
 
 
 #
@@ -369,7 +387,7 @@ class ZephyrOutputFormatter(abc.ABC):
         raise ValueError('no output formatter for {}'.format(name))
 
     @abc.abstractmethod
-    def get_output(self, repo_analysis):
+    def get_output(self, repo_analysis, context=None):
         '''Get formatted output from a repo analysis.
 
         For now, this must be print()able.'''
@@ -379,26 +397,24 @@ class ZephyrTextFormatMixin:
     '''Plain text output formatter mix-in class.
     '''
 
-    def do_get_output(self, analysis, include_fio_outstanding=True):
-        '''Convenient hook for subclasses to use.'''
-        preamble = self.preamble()
-        highlights = self._highlights(analysis)
-        individual_changes = self._individual_changes(analysis)
-        if include_fio_outstanding:
-            fio_outstanding = self._fio_outstanding(analysis)
-        else:
-            fio_outstanding = []
-        postamble = self.postamble()
-        return '\n'.join(preamble + highlights + individual_changes +
-                         fio_outstanding + postamble)
+    def get_output(self, analysis, context=None):
+        '''Render the output.'''
+        if context is None:
+            context = {}
+        preamble = self.preamble(analysis, context)
+        highlights = self._highlights(analysis, context)
+        individual_changes = self._individual_changes(analysis, context)
+        postamble = self.postamble(analysis, context)
+        return '\n'.join(chain(preamble, highlights, individual_changes,
+                               postamble))
 
-    def preamble(self):
+    def preamble(self, analysis, context):
         '''Subclass override hook for introductory or preamble sections.
 
         Should return a list of lines.'''
         return []
 
-    def postamble(self):
+    def postamble(self, analysis, context):
         '''Subclass override hook for closing or postamble sections.
 
         Should return a list of lines.'''
@@ -423,7 +439,7 @@ class ZephyrTextFormatMixin:
         '''Get a locale-specific day the commit was merged.'''
         return time.strftime('%-d %B %Y', time.localtime(commit.commit_time))
 
-    def _highlights(self, analysis):
+    def _highlights(self, analysis, context):
         '''Create a mergeup commit log message template.
 
         Groups the iterable of upstream commits by area, dumping a message
@@ -443,7 +459,7 @@ class ZephyrTextFormatMixin:
                  '',
                  '<Top-level highlights go here>',
                  '',
-                 '<Introductory line about Zephyr between these commits>:',
+                 'This {} covers the following inclusive commit range:'.format(self.names()[0]),  # noqa: E501
                  '',
                  self.upstream_commit_line(first, merge_day=True),
                  self.upstream_commit_line(last, merge_day=True),
@@ -497,7 +513,7 @@ class ZephyrTextFormatMixin:
 
         return ret
 
-    def _individual_changes(self, analysis):
+    def _individual_changes(self, analysis, context):
         area_logs = {}
         for area, patches in analysis.upstream_area_patches.items():
             area_logs[area] = self._upstream_area_message(area, patches)
@@ -509,7 +525,24 @@ class ZephyrTextFormatMixin:
             self._areas_summary(analysis) +
             [area_logs[area] for area in sorted(area_logs)])
 
-    def _fio_outstanding(self, analysis):
+
+class ZephyrMergeupFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
+    '''Mergeup commit message format, plain text.
+
+    This includes a summary of foundries.io outstanding patches, and may
+    print warnings if there are likely reverted foundries.io commits'''
+
+    @classmethod
+    def names(cls):
+        return ['mergeup', 'mergeup-message']
+
+    def preamble(self, analysis, context):
+        return [
+            "[FIO mergeup] Merge 'zephyrproject-rtos/master' into 'osf-dev/master'",  # noqa: E501
+            ''
+            ]
+
+    def postamble(self, analysis, context):
         outstanding = analysis.fio_outstanding_patches
         likely_merged = analysis.fio_merged_patches
         ret = []
@@ -550,31 +583,43 @@ class ZephyrTextFormatMixin:
         return ret
 
 
-class ZephyrTextFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
-    '''Plain text, for mergeup commit messages.
-
-    This includes a summary of foundries.io outstanding patches, and may
-    print warnings if there are likely reverted foundries.io commits'''
-
-    @classmethod
-    def names(cls):
-        return ['txt', 'text/plain']
-
-    def get_output(self, analysis):
-        return self.do_get_output(analysis, include_fio_outstanding=True)
-
-
-class ZephyrMarkdownFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
-    '''Markdown, for blog posts.
+class ZephyrNewsletterFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
+    '''Newsletter Markdown format, for blog posts.
 
     This doesn't include a summary of outstanding foundries.io commits.'''
 
     @classmethod
     def names(cls):
-        return ['md', 'text/markdown']
+        return ['newsletter', 'news']
 
-    def get_output(self, analysis):
-        return self.do_get_output(analysis, include_fio_outstanding=False)
+    def preamble(self, analysis, context):
+        datestamp = date.today().strftime('%d %B %Y')
+        datestamp_hugo = date.today().strftime('%Y-%m-%d')
+        author = context.get('author', None) or get_user_full_name()
+
+        return [
+            # Hugo blogging front matter.
+            '+++',
+            'title = "Zephyr Development News {}"'.format(datestamp),
+            'date = "{}"'.format(datestamp_hugo),
+            'tags = ["zephyr"]',
+            'categories = ["zephyr-news"]',
+            'banner = "img/banners/zephyr.png"',
+            'author = "{}"'.format(author),
+            '+++',
+            '',
+
+            # Introductory boilerplate.
+            'This is the {} newsletter tracking the latest'.format(datestamp),
+            '[Zephyr](https://zephyrproject.org) development merged into the',
+            '[mainline tree on',
+            'GitHub](https://github.com/zephyrproject-rtos/zephyr).',
+            '',
+            '<!--more-->',
+            '',
+            '{{% toc %}}',  # toc is a foundries.io specific hugo shortcode
+            '',
+        ]
 
     def upstream_commit_line(self, commit, merge_day=False):
         '''Get a line about the given upstream commit.'''
@@ -645,7 +690,11 @@ def main(args):
         sys.exit(1)
 
     formatter = formatter_cls()
-    output = formatter.get_output(analysis)
+    if args.format in ZephyrNewsletterFormatter.names():
+        context = {'author': args.newsletter_author}
+    else:
+        context = None
+    output = formatter.get_output(analysis, context=context)
     print(output)
 
 
@@ -813,35 +862,47 @@ def _self_test():
 
 
 if __name__ == '__main__':
+    formats = tuple(
+        chain.from_iterable(f.names() for f in
+                            ZephyrOutputFormatter.__subclasses__()))
     parser = argparse.ArgumentParser(description='''Zephyr mergeup helper
                                      script. This script currently just
                                      prints the mergeup commit message.''')
-    parser.add_argument('--areas', action='store_true',
-                        help='''Print all areas that upstream commits are
-                        grouped into in mergeup commit logs, and exit.''')
-    parser.add_argument('--fio-ref', default='osf-dev/master',
-                        help='''foundries.io ref (commit-ish) to analyze
-                        upstream differences with. Default is osf-dev/master
-                        [sic; this is a legacy from the OSF days].''')
-    parser.add_argument('--upstream-ref', default='upstream/master',
-                        help='''Upstream ref (commit-ish) whose differences
-                        with fio-ref to analyze. Default is
-                        upstream/master.''')
-    parser.add_argument('-A', '--set-area', default=[], action='append',
-                        help='''Format is sha:Area; associates an area with
-                        a commit SHA. Use --areas to print all areas.''')
-    parser.add_argument('-p', '--set-area-prefix', default=[], action='append',
-                        help='''Format is prefix:Area; associates an area prefix
-                        (which must be a literal string for now) to a given
-                        area.''')
-    parser.add_argument('-f', '--format', default='md',
-                        help='''Output format, default is md
-                        (text/markdown).''')
-    parser.add_argument('--self-test', action='store_true',
-                        help='Perform an internal self-test, and exit.')
+    group = parser.add_argument_group('repository options')
+    group.add_argument('--fio-ref', default='osf-dev/master',
+                       help='''foundries.io ref (commit-ish) to analyze
+                       upstream differences with. Default is osf-dev/master
+                       [sic; this is a legacy from the OSF days].''')
+    group.add_argument('--upstream-ref', default='upstream/master',
+                       help='''Upstream ref (commit-ish) whose differences
+                       with fio-ref to analyze. Default is
+                       upstream/master.''')
+    group.add_argument('-A', '--set-area', default=[], action='append',
+                       help='''Format is sha:Area; associates an area with
+                       a commit SHA. Use --areas to print all areas.''')
+    group.add_argument('-p', '--set-area-prefix', default=[], action='append',
+                       help='''Format is prefix:Area; associates an area prefix
+                       (which must be a literal string for now) to a given
+                       area.''')
+
+    group = parser.add_argument_group('output formatting options')
+    group.add_argument('-f', '--format', default='newsletter',
+                       choices=formats,
+                       help='''Output format, default is "newsletter"''')
+    group.add_argument('--newsletter-author',
+                       help='Override newsletter author full name')
+
+    group = parser.add_argument_group('miscellaneous options')
+    group.add_argument('--areas', action='store_true',
+                       help='''Print all areas that upstream commits are
+                       grouped into in mergeup commit logs, and exit.''')
+    group.add_argument('--self-test', action='store_true',
+                       help='Perform an internal self-test, and exit.')
+
     parser.add_argument('repo', nargs='?',
                         help='''Path to the zephyr repository. If not given,
                         the current working directory is assumed.''')
+
     args = parser.parse_args()
 
     if args.self_test:
