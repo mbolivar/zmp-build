@@ -381,13 +381,28 @@ class ZephyrTextFormatMixin:
 
     def do_get_output(self, analysis, include_fio_outstanding=True):
         '''Convenient hook for subclasses to use.'''
+        preamble = self.preamble()
         highlights = self._highlights(analysis)
         individual_changes = self._individual_changes(analysis)
         if include_fio_outstanding:
             fio_outstanding = self._fio_outstanding(analysis)
         else:
             fio_outstanding = []
-        return '\n'.join(highlights + individual_changes + fio_outstanding)
+        postamble = self.postamble()
+        return '\n'.join(preamble + highlights + individual_changes +
+                         fio_outstanding + postamble)
+
+    def preamble(self):
+        '''Subclass override hook for introductory or preamble sections.
+
+        Should return a list of lines.'''
+        return []
+
+    def postamble(self):
+        '''Subclass override hook for closing or postamble sections.
+
+        Should return a list of lines.'''
+        return []
 
     def emph(self, text):
         '''Emphasizes ``text``.'''
