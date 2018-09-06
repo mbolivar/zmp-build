@@ -1,5 +1,6 @@
 # Copyright (c) 2017 Linaro Limited.
 # Copyright (c) 2017 Open Source Foundries Limited.
+# Copyright (c) 2018 Foundries.io Limited.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -390,15 +391,13 @@ class Build(Command):
         mcuboot_source = os.path.join(find_mcuboot_root(), 'boot', 'zephyr')
         gen_options = ['-DBOARD={}'.format(board)] + self.toolchain_args()
 
-        # If the application sources contain a
-        # boards/$BOARD-mcuboot.overlay, bring it into the MCUboot
-        # build by default.
+        # If the application sources contain mcuboot.overlay, bring it
+        # into the MCUboot build as well.
         app_source = find_app_root(app)
-        app_mcuboot_overlay = os.path.join(
-            app_source, 'boards', '{}-mcuboot.overlay'.format(board))
-        if os.path.exists(app_mcuboot_overlay):
+        mcuboot_overlay = os.path.join(app_source, 'mcuboot.overlay')
+        if os.path.exists(mcuboot_overlay):
             gen_options.extend(['-DDTC_OVERLAY_FILE={}'.format(
-                    shlex.quote(app_mcuboot_overlay))])
+                    shlex.quote(mcuboot_overlay))])
 
         # MCUboot requires a key Kconfig option, so we need an overlay
         # file; the only convenient ways to bake them in from here are
