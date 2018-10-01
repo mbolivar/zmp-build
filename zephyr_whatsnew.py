@@ -285,8 +285,10 @@ class ZephyrRepoAnalyzer:
                 # from outstanding.
                 what = shortlog_reverts_what(sl)
                 if what not in fio_outstanding:
-                    msg = "{} was reverted, but isn't present in FIO history"
-                    raise RuntimeError(msg.format(what))
+                    print('WARNING: {} was reverted,'.format(what),
+                          "but isn't present in FIO history",
+                          file=sys.stderr)
+                    continue
                 del fio_outstanding[what]
             else:
                 # Non-revert commits just get appended onto
