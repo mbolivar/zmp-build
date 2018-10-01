@@ -22,8 +22,10 @@ from itertools import chain
 import os
 import platform
 import re
+import shlex
 from subprocess import check_output
 import sys
+import textwrap
 import time
 
 import pygit2
@@ -642,30 +644,35 @@ class ZephyrNewsletterFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
 
 
 def dump_unknown_commit_help(unknown_commits):
-    print("Error: can't build mergeup log message.",
-          'The following commits have unknown areas:',
+    msg = """\
+    Error: can't build mergeup log message.
+
+    The following commits have unknown areas:
+
+    {}
+
+    You can manually specify areas like so:
+
+    {}
+
+    Where each AREA is taken from the list:
+
+    \t{}
+
+    You can also update AREA_TO_SHORTLOG_RES in {}
+    to permanently associate an area with this type of shortlog.
+    """
+    unknown_as_list = ['- {} {}'.format(commit_shortsha(c),
+                                        commit_shortlog(c))
+                       for c in unknown_commits]
+    try_instead = chain((shlex.quote(a) for a in sys.argv),
+                        ('--set-area={}:AREA'.format(commit_shortsha(c))
+                         for c in unknown_commits))
+    print(textwrap.dedent(msg).format('\n'.join(unknown_as_list),
+                                      ' '.join(try_instead),
+                                      '\n\t'.join(AREAS),
+                                      __file__),
           file=sys.stderr)
-    print(file=sys.stderr)
-    for c in unknown_commits:
-        print('- {} {}'.format(commit_shortsha(c), commit_shortlog(c)),
-              file=sys.stderr)
-    print(file=sys.stderr)
-    print('You can manually specify areas like so:', file=sys.stderr)
-    print(file=sys.stderr)
-    print(sys.argv[0], end='', file=sys.stderr)
-    for c in unknown_commits:
-        print(' --set-area {}:AREA'.format(commit_shortsha(c)),
-              end='', file=sys.stderr)
-    print(' ...', file=sys.stderr)
-    print(file=sys.stderr)
-    print('\n\t'.join(['Where each AREA is taken from the list:'] + AREAS))
-    print(file=sys.stderr)
-    print('You can also update AREA_TO_SHORTLOG_RES in {}'.format(
-              sys.argv[0]),
-          file=sys.stderr)
-    print('to permanently associate an area with this type of shortlog.',
-          file=sys.stderr)
-    print(file=sys.stderr)
 
 
 def main(args):
