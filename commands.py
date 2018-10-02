@@ -6,7 +6,6 @@
 
 import abc
 import glob
-import importlib
 import multiprocessing
 import os
 import platform
@@ -15,6 +14,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+
+from west.runners.core import BuildConfiguration
+from west import main as west_main
 
 # We could be smarter about this (search for .repo, e.g.), but it seems
 # unnecessary.
@@ -161,6 +163,16 @@ def signed_app_name(app, board, app_outdir, ext):
     path = os.path.join(app_outdir, 'zephyr', file_name)
     return path
 
+
+def append_to_pythonpath(directory):
+    pp = os.environ.get('PYTHONPATH')
+    os.environ['PYTHONPATH'] = ':'.join(([pp] if pp else []) + [directory])
+
+
+# Make sure west's own imports work when invoked.
+append_to_pythonpath(os.path.dirname(os.path.dirname(west_main.__file__)))
+
+
 #
 # Command class
 #
@@ -265,17 +277,6 @@ class Command(abc.ABC):
             self.wrn('\tenvironment value: {}'.format(env_val))
             self.wrn('\tusing value:       {}'.format(zephyr_base))
 
-        # Ensure we can import the west runner subpackage from the
-        # current ZEPHYR_BASE, either in this script or when invoking
-        # west programmatically.
-        sys.path.append(os.path.join(zephyr_base, 'scripts', 'meta'))
-
-        # For some reason, relative imports of runner submodules on
-        # Python <3.6 fail with errors about west.runner not being
-        # imported without this line.
-        if sys.version_info < (3, 6):
-            importlib.import_module('west.runner')
-
         self.do_prep_for_run()
         command_env = dict(os.environ)
         command_env['ZEPHYR_BASE'] = zephyr_base
@@ -309,7 +310,7 @@ class Command(abc.ABC):
         args = [shlex.quote(s) for s in command]
         return fmt.format(*args)
 
-    def check_call(self, command, **kwargs):
+    def _subprocess(self, subprocess_runner, command, **kwargs):
         msg = kwargs.get('msg', 'Running command')
         env = kwargs.get('env', self.command_env)
 
@@ -322,22 +323,25 @@ class Command(abc.ABC):
 
         kwargs['env'] = env
         try:
-            subprocess.check_call(command, **kwargs)
+            ret = subprocess_runner(command, **kwargs)
         except subprocess.CalledProcessError:
             cmd = self._cmd_to_string(command)
             print('Failed to run command: {}'.format(cmd), file=sys.stderr)
             raise
 
+        return ret
+
+    def check_call(self, command, **kwargs):
+        return self._subprocess(subprocess.check_call, command, **kwargs)
+
+    def check_output_enc(self, command, **kwargs):
+        outbytes = self._subprocess(subprocess.check_output, command, **kwargs)
+        encoding = kwargs.get('encoding', sys.getdefaultencoding())
+        return outbytes.decode(encoding)
+
     def check_west_call(self, args, **kwargs):
-        '''Like check_call, but prepends the path to west as the command.'''
-        # West makes its own assumptions about signal and exception
-        # handling, hence the subprocess wrapper.
-        #
-        # The Windows launcher script west-win.py, when invoked
-        # directly instead of through "py -3", is cross-platform.
-        west = os.path.join(self.command_env['ZEPHYR_BASE'],
-                            'scripts', 'west-win.py')
-        self.check_call([sys.executable, west] + args, **kwargs)
+        '''Runs west with check_call and the given arguments.'''
+        self.check_call([sys.executable, west_main.__file__] + args, **kwargs)
 
 
 #
@@ -453,8 +457,6 @@ class Build(Command):
                 self.insecure_requested = False
             self.arguments.signing_key = os.path.abspath(key)
 
-        self.runner_core = importlib.import_module('.core', 'west.runner')
-
         check_boards(self.arguments.boards)
         check_dependencies(['cmake', 'dtc'])
         if self.arguments.generator == 'Ninja':
@@ -559,7 +561,7 @@ class Build(Command):
     def sign_commands(self, app, board, outdir):
         ret = []
 
-        bcfg = self.runner_core.BuildConfiguration(outdir)
+        bcfg = BuildConfiguration(outdir)
         align = str(bcfg['FLASH_WRITE_BLOCK_SIZE'])
         vtoff = str(bcfg['CONFIG_TEXT_SECTION_OFFSET'])
         version = self.arguments.imgtool_version
@@ -775,7 +777,6 @@ class Flash(Command):
             raise ValueError('only one board target may be used when '
                              'specifying --board-id')
 
-        self.runner_core = importlib.import_module('.core', 'west.runner')
         self.arguments.app = self.arguments.app.strip(os.path.sep)
 
     def do_invoke(self):
@@ -791,7 +792,7 @@ class Flash(Command):
 
     def west_flash(self, outdir, app, board, board_id=None):
         app_outdir = find_app_outdir(outdir, app, board)
-        bcfg = self.runner_core.BuildConfiguration(app_outdir)
+        bcfg = BuildConfiguration(app_outdir)
 
         west_args = ['flash']
         if board_id is not None:

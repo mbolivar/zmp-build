@@ -6,10 +6,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+import os
+import subprocess
 import sys
 
-from commands import Command
+# Ensure west is importable from commands.
+WEST_SRC = os.path.join(
+    subprocess.check_output('repo list -fpr west'.split()).decode(
+        sys.getdefaultencoding()).strip(),
+    'src')
+sys.path.append(WEST_SRC)
 
+from commands import Command
 
 PROGRAM = sys.argv[0]
 ARGV = sys.argv[1:]
