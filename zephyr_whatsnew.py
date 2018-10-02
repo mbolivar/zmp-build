@@ -424,10 +424,6 @@ class ZephyrTextFormatMixin:
         Should return a list of lines.'''
         return []
 
-    def emph(self, text):
-        '''Emphasizes ``text``.'''
-        return text
-
     def upstream_commit_line(self, commit, merge_day=False):
         '''Get a line about the given upstream commit.'''
         if merge_day:
@@ -455,9 +451,6 @@ class ZephyrTextFormatMixin:
         shortlog.
         '''
         first, last = analysis.upstream_commit_range
-        emph_areas = []
-        for ae in [self.emph(a + ':') for a in AREAS]:
-            emph_areas.extend([ae, ''])
         return (['Highlights',
                  '==========',
                  '',
@@ -467,26 +460,7 @@ class ZephyrTextFormatMixin:
                  '',
                  self.upstream_commit_line(first, merge_day=True),
                  self.upstream_commit_line(last, merge_day=True),
-                 '',
-                 'Important Changes',
-                 '-----------------',
-                 '',
-                 '<Important changes, like API breaks, go here>',
-                 '',
-                 'Features',
-                 '--------',
-                 '',
-                 '<New features go here>',
-                 ''] +
-                emph_areas +
-                ['',
-                 'Bug Fixes',
-                 '---------',
-                 '',
-                 '<Notable fixes or notes on large groups of fixes go here>',
-                 ''] +
-                emph_areas +
-                [''])
+                 ''])
 
     def _upstream_area_message(self, area, commits):
         '''Given an area and its commits, get mergeup commit text.'''
@@ -640,9 +614,6 @@ class ZephyrNewsletterFormatter(ZephyrTextFormatMixin, ZephyrOutputFormatter):
             return '- [{}]({}) {}'.format(commit_shortsha(commit),
                                           link,
                                           commit_shortlog(commit))
-
-    def emph(self, text):
-        return '**' + text + '**'
 
 
 def dump_unknown_commit_help(unknown_commits):
