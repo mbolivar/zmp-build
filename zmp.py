@@ -42,17 +42,8 @@ def main():
         commands = ', '.join(command_handlers.keys())
         print('Missing command. Choices: {}'.format(commands), file=sys.stderr)
         sys.exit(1)
-    try:
-        command_handlers[args.cmd].invoke(args)
-    except Exception as e:
-        if args.debug:
-            raise
-        else:
-            msg = ('Fatal error occurred; re-run as '
-                   '{} --debug {} ... for a stack trace.').format(
-                       PROGRAM, args.cmd)
-            print(msg, file=sys.stderr)
-        sys.exit(1)
+
+    command_handlers[args.cmd].invoke(args)
 
 
 if __name__ == '__main__':
