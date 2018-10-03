@@ -522,9 +522,19 @@ class Build(Command):
         # with the cmake command line.
         os.makedirs(outdir, exist_ok=True)
         key_overlay = os.path.join(outdir, 'mcuboot-key-file.conf')
-        with open(key_overlay, 'w') as f:
-            print('CONFIG_BOOT_SIGNATURE_KEY_FILE="{}"'.format(
-                self.arguments.signing_key), file=f)
+        overlay_contents = 'CONFIG_BOOT_SIGNATURE_KEY_FILE="{}"\n'.format(
+            self.arguments.signing_key)
+        write = True
+        if os.path.isfile(key_overlay):
+            # Don't write to this file if it already contains the
+            # right thing; that forces CMake to re-run.
+            with open(key_overlay, 'r') as f:
+                contents = f.read()
+                if contents == overlay_contents:
+                    write = False
+        if write:
+            with open(key_overlay, 'w') as f:
+                f.write(overlay_contents)
 
         self.cmake_build(mcuboot_source, outdir, gen_options)
 
