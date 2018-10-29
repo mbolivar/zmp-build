@@ -47,7 +47,7 @@ from pygit2_helpers import shortlog_is_revert, shortlog_reverts_what, \
 AREA_TO_SHORTLOG_RES = [
     ('Arches', ['arch(/.*)?', 'arc(/.*)?', 'arm(/.*)?', 'esp32(/.*)?',
                 'native(/.*)?', 'native_posix', 'nios2(/.*)?', 'posix(/.*)?',
-                'lpc(/.*)?', 'riscv32(/.*)?', 'soc(/.*)?', 'x86(/.*)?',
+                'lpc(/.*)?', 'riscv(32)?(/.*)?', 'soc(/.*)?', 'x86(/.*)?',
                 'xtensa(/.*)?']),
     ('Bluetooth', ['bluetooth', 'bt']),
     ('Boards', ['boards?(/.*)?', 'mimxrt1050_evk']),
@@ -82,10 +82,10 @@ AREA_TO_SHORTLOG_RES = [
     ('Networking', ['net(/.*)?', 'openthread', 'slip']),
     ('Power Management', ['power']),
     ('Samples', ['samples?(/.*)?']),
-    ('Scripts', ['scripts?(/.*)?', 'runner', 'gen_syscalls.py',
-                 'gen_syscall_header.py', 'kconfiglib']),
+    ('Scripts', ['scripts?(/.*)?', 'coccinelle', 'runner', 'gen_syscalls.py',
+                 'gen_syscall_header.py', 'kconfiglib', 'west']),
     ('Storage', ['fs(/.*)?', 'disks?', 'fcb', 'settings']),
-    ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest']),
+    ('Testing', ['tests?(/.*)?', 'testing', 'unittest', 'ztest', 'tracing']),
     ]
 
 
@@ -691,6 +691,7 @@ def _self_test():
          'xtensa/asm2: Add a _new_thread implementation for asm2/switch'),
         ('Arches', 'esp32: Set CPU pointer on app cpu at startup'),
         ('Arches', 'native_posix: Be more precise with stop-at'),
+        ('Arches', 'riscv: Add device tree support to pulpino'),
         ('Bluetooth', 'Bluetooth: Mesh: Fix typo in Kconfig help message'),
         ('Bluetooth',
          'bt: hci driver over spi: BlueNRG-MS read until IRQ pin goes low'),
@@ -810,6 +811,8 @@ def _self_test():
         ('Scripts', 'gen_syscalls.py: fix include issue'),
         ('Scripts', 'gen_syscall_header.py: fix include issue'),
         ('Scripts', 'kconfiglib: Update to 2259d353426f1'),
+        ('Scripts', 'Coccinelle: Add support for Coccinelle infrastructure'),
+        ('Scripts', 'west: runner: fix naming and paths to xt-ocd'),
         ('Storage', 'subsys: settings: fix fcb back-end initialization'),
         ('Storage', 'subsys: fs/nvs: improve syslog messages'),
         ('Testing', 'tests: use cmake to build object benchmarks'),
@@ -821,6 +824,7 @@ def _self_test():
          'test that _k_neg_eagain is in rodata'),
         ('Testing', 'unittest: Support EXTRA_*_FLAGS'),
         ('Testing', 'testing: add option to generate coverage reports'),
+        ('Testing', 'tracing: don\'t include kernel_structs.h from tracing_sysview.h'),
 
         # Cases we explicitly do not want to match, and why:
 
