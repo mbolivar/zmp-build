@@ -27,8 +27,8 @@ import sys
 import textwrap
 import time
 
-from pygit2_helpers import commit_shortsha, commit_shortlog
-from zephyr_helpers import AREAS, ZephyrRepoAnalyzer, shortlog_area, \
+from zephyr_tools.pygit2_helpers import commit_shortsha, commit_shortlog
+from zephyr_tools.zephyr_helpers import AREAS, ZephyrRepoAnalyzer, \
     UnknownCommitsError
 
 
