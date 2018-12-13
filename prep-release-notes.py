@@ -12,7 +12,7 @@ from xml.etree import ElementTree
 
 import click
 
-from pygit2_helpers import repo_commits, \
+from zephyr_tools.pygit2_helpers import repo_commits, \
     commit_date, commit_shortsha, commit_shortlog
 
 DEFAULT_INDENT = 12
