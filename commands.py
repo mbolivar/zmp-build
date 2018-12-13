@@ -28,7 +28,7 @@ ZEPHYR_PATH = 'zephyr'
 
 # The name of the directory which is the default root of the build hierarchy,
 # relative to the .repo root.
-BUILD_DIR_DEFAULT = 'outdir'
+BUILD_DIR_DEFAULT = 'build'
 
 # Where mcuboot is relative to the .repo top level.
 MCUBOOT_PATH = 'mcuboot'
@@ -81,7 +81,7 @@ def find_arm_none_eabi_gcc():
         }
     subdir = platform_subdirectories[platform.system()]
     return os.path.join(find_zmp_root(),
-                        'build',
+                        'zmp-build',
                         'other',
                         'zmp-prebuilt',
                         'arm-none-eabi-gcc',
